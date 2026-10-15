@@ -149,8 +149,7 @@ local function Who(quest, kinds, items)
 	if first then return first end
 	local item = items and (row.i or EMPTY)[1]
 	if item then
-		local name = Clean(Safe(C_Item and C_Item.GetItemNameByID or GetItemInfo, item))
-		return { kind = "Item", id = item, name = name or ("#" .. item) }
+		return { kind = "Item", id = item, name = U.ItemName(item) or ("#" .. item) }
 	end
 	return nil
 end
@@ -165,8 +164,7 @@ function ns.Asks(quest)
 	local items, kills = row.r or EMPTY, row.k or EMPTY
 	for index = 1, #items, 2 do
 		local id = items[index]
-		list[#list + 1] = { kind = "Item", id = id, count = items[index + 1] or 1,
-			name = Clean(Safe(C_Item and C_Item.GetItemNameByID or GetItemInfo, id)) }
+		list[#list + 1] = { kind = "Item", id = id, count = items[index + 1] or 1, name = U.ItemName(id) }
 	end
 	for index = 1, #kills, 2 do
 		local id = kills[index]
@@ -177,15 +175,148 @@ function ns.Asks(quest)
 	return list
 end
 
+-- The rewards as the game gives them -------------------------------------------------------------------
+-- Forever changed some quests' rewards: what the game shows wins over the old base. Kept for the whole
+-- account (WandererQuestsDB.rewards: quest -> { rc, rg, m }, as in the data), only for the quests seen.
+
+local function Seen()
+	WandererQuestsDB = type(WandererQuestsDB) == "table" and WandererQuestsDB or {}
+	WandererQuestsDB.rewards = type(WandererQuestsDB.rewards) == "table" and WandererQuestsDB.rewards or {}
+	return WandererQuestsDB.rewards
+end
+
+-- Items as the data keeps them: { id, count, id, count... }; nil when one is not known yet (asked again later).
+local function ReadItems(count, read)
+	local list = {}
+	for index = 1, count do
+		local id, amount = read(index)
+		if not id then return nil end
+		list[#list + 1], list[#list + 2] = id, amount or 1
+	end
+	return list
+end
+
+local function Keep(questID, choice, given, money)
+	if not (questID and questID > 0 and choice and given) then return false end
+	if choice[1] or given[1] or money > 0 then Seen()[questID] = { rc = choice, rg = given, m = money } end
+	return true
+end
+
+-- The quest the game's window shows (offered, its progress, given back).
+function ns.LearnShown()
+	local id = Clean(Safe(GetQuestID))
+	local function Reader(kind)
+		return function(index)
+			local item = U.ItemID(Clean(Safe(GetQuestItemLink, kind, index)))
+			local _, _, amount = Safe(GetQuestItemInfo, kind, index)
+			return item, Clean(amount)
+		end
+	end
+	local choice = ReadItems(Clean(Safe(GetNumQuestChoices)) or 0, Reader("choice"))
+	local given = ReadItems(Clean(Safe(GetNumQuestRewards)) or 0, Reader("reward"))
+	return Keep(id, choice, given, Clean(Safe(GetRewardMoney)) or 0)
+end
+
+-- A quest of your log (its choices read with it chosen in the log, the one chosen before given back).
+function ns.LearnLog(questID)
+	local log = C_QuestLog
+	if not (log and questID and log.SetSelectedQuest) then return false end
+	local index = Clean(Safe(log.GetLogIndexForQuestID, questID))
+	if not (index and index > 0) then return false end
+	local before = Clean(Safe(log.GetSelectedQuest))
+	Safe(log.SetSelectedQuest, questID)
+	local choice = ReadItems(Clean(Safe(GetNumQuestLogChoices, questID, false)) or 0, function(i)
+		local _, _, amount, _, _, item = Safe(GetQuestLogChoiceInfo, i)
+		return Clean(item), Clean(amount)
+	end)
+	local given = ReadItems(Clean(Safe(GetNumQuestLogRewards, questID)) or 0, function(i)
+		local _, _, amount, _, _, item = Safe(GetQuestLogRewardInfo, i, questID)
+		return Clean(item), Clean(amount)
+	end)
+	local money = Clean(Safe(GetQuestLogRewardMoney, questID)) or 0
+	if before then Safe(log.SetSelectedQuest, before) end
+	return Keep(questID, choice, given, money)
+end
+
+-- Every quest of your log.
+function ns.LearnAllLog()
+	local log = C_QuestLog
+	if not (log and log.GetNumQuestLogEntries and log.GetInfo) then return end
+	for index = 1, Clean(Safe(log.GetNumQuestLogEntries)) or 0 do
+		local info = Safe(log.GetInfo, index)
+		local id = type(info) == "table" and not Clean(info.isHeader) and Clean(info.questID)
+		if id then ns.LearnLog(id) end
+	end
+end
+
+do
+	local learner = CreateFrame("Frame")
+	for _, event in ipairs({ "QUEST_DETAIL", "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_ACCEPTED" }) do
+		pcall(learner.RegisterEvent, learner, event)
+	end
+	learner:SetScript("OnEvent", function(_, event, questID)
+		if event == "QUEST_ACCEPTED" then
+			ns.LearnLog(Clean(questID))
+		elseif not ns.LearnShown() then
+			-- (an item the game was still fetching: read again a moment after)
+			C_Timer.After(0.5, ns.LearnShown)
+		end
+	end)
+end
+
+-- What it gives: { choice = { items, one of them yours }, given = { items }, money (copper), seen (as the game
+-- gives them, else the old base's) }; each item { id, count, name, link, icon, quality } (name and link nil
+-- until the game knows the item: asked then).
+function ns.Rewards(quest)
+	local seen = Seen()[quest.id]
+	local row = seen or quest.row
+	local function Items(list)
+		local items = {}
+		for index = 1, #list, 2 do
+			local id = list[index]
+			local name, link, quality = U.ItemInfo(id)
+			if not name then U.LoadItem(id) end
+			items[#items + 1] = { id = id, count = list[index + 1] or 1, name = name, link = link, quality = quality, icon = U.ItemIcon(id) }
+		end
+		return items
+	end
+	return { choice = Items(row.rc or EMPTY), given = Items(row.rg or EMPTY), money = row.m or 0, seen = seen ~= nil }
+end
+
+-- One of its rewards better for you (Wanderer's comparison, for your branch): true, false, or nil while the
+-- game is still fetching one of them.
+function ns.RewardUpgrade(quest)
+	if not (W and W.IsUpgrade) then return false end
+	local rewards = ns.Rewards(quest)
+	local waiting = false
+	for _, list in ipairs({ rewards.choice, rewards.given }) do
+		for _, item in ipairs(list) do
+			if not item.link then
+				waiting = true
+			elseif W.IsUpgrade(item.link) then
+				return true
+			end
+		end
+	end
+	if waiting then return nil end
+	return false
+end
+
+-- A dungeon's own quests you could take now (to take, not in your log), and its levels.
+function ns.Waiting(dungeon)
+	local count = 0
+	for _, id in ipairs(ns.Index()[dungeon.id] or EMPTY) do
+		local quest = ns.Quest(id)
+		if ns.ForYou(quest) and ns.Status(quest) == "available" then count = count + 1 end
+	end
+	return count, ns.Summary(dungeon.id, "dungeons")
+end
+
 -- Its texts in your language: what to do, its story ($B a new line; your name, class, race; he or she).
 local texts
 function ns.Texts(quest)
 	if texts == nil then
-		local compile = loadstring or load
-		local made = type(ns.TEXT_SOURCE) == "string" and compile and compile(ns.TEXT_SOURCE)
-		local ok, value = false, nil
-		if made then ok, value = pcall(made) end
-		texts = ok and type(value) == "table" and value or false
+		texts = Read(ns.TEXT_SOURCE) or false
 		ns.TEXT_SOURCE = nil
 	end
 	local entry = texts and texts[quest.id]
@@ -318,6 +449,43 @@ function ns.Status(quest)
 	return status
 end
 
+-- What comes after a quest: the quests (for you) that have it before them (a choice among others too).
+local nextOf
+function ns.Next(quest)
+	if not nextOf then
+		nextOf = {}
+		for id, row in pairs(ns.QUESTS or EMPTY) do
+			for _, before in ipairs(row.before or EMPTY) do
+				nextOf[before] = nextOf[before] or {}
+				table.insert(nextOf[before], id)
+			end
+		end
+	end
+	local list = {}
+	for _, id in ipairs(nextOf[quest.id] or EMPTY) do
+		local other = ns.Quest(id)
+		if ns.ForYou(other) then list[#list + 1] = other end
+	end
+	table.sort(list, function(a, b) return (a.questLevel or 0) < (b.questLevel or 0) end)
+	return list
+end
+
+-- What still holds a quest back: the names of the quests before it not done yet (one of them is enough
+-- when they are a choice: then none is done).
+function ns.Missing(quest)
+	local names = {}
+	if quest.any then
+		for _, id in ipairs(quest.before) do
+			if Done(id) then return names end
+		end
+	end
+	for _, id in ipairs(quest.before) do
+		local other = ns.Quest(id)
+		if other and not Done(id) and ns.ForYou(other) then names[#names + 1] = ns.QuestName(other) end
+	end
+	return names
+end
+
 -- Maps ------------------------------------------------------------------------------------------
 
 -- An area's name in your language (without what the game may add in parentheses, its English name).
@@ -331,6 +499,7 @@ end
 local function Plain(name)
 	return (name:gsub("%s*%b()", ""):gsub("^%s+", ""):gsub("%s+$", ""):lower())
 end
+ns.Plain = Plain
 
 -- The game's maps of zones, by their names (in your language, as the areas' names are).
 local maps
@@ -370,14 +539,7 @@ local function MapOfArea(area)
 end
 
 -- The game's own pin on a map (x, y: 0 to 100); false when it cannot.
-function ns.PinMap(map, x, y)
-	if not (map and x and y and UiMapPoint and C_Map and C_Map.SetUserWaypoint) then return false end
-	local point = Safe(UiMapPoint.CreateFromCoordinates, map, x / 100, y / 100)
-	if not point then return false end
-	Safe(C_Map.SetUserWaypoint, point)
-	if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then Safe(C_SuperTrack.SetSuperTrackedUserWaypoint, true) end
-	return true
-end
+function ns.PinMap(map, x, y) return U.Pin(map, x and x / 100, y and y / 100) end
 
 function ns.Pin(area, x, y) return ns.PinMap(area and MapOfArea(area), x, y) end
 
@@ -491,6 +653,20 @@ function ns.Index()
 	end
 	for _, ids in pairs(index) do table.sort(ids) end
 	return index
+end
+
+-- Where a quest is shown: your class's band first, else its dungeon, else its zone (kind, place), or nil.
+function ns.PlaceOf(id)
+	local quest = ns.Quest(id)
+	if not quest then return nil end
+	for _, band in ipairs(ClassBands()) do
+		for _, other in ipairs(band.ids) do
+			if other == id then return "class", band.id end
+		end
+	end
+	if ns.DUNGEONS and ns.DUNGEONS[quest.zone] then return "dungeons", quest.zone end
+	if ns.ZONES and ns.ZONES[quest.zone] then return "zones", quest.zone end
+	return nil
 end
 
 -- The quests of a place.

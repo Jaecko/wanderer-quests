@@ -10,9 +10,8 @@ local L = ns.L
 
 local W = Wanderer
 local U = W and W.Util
-local Safe, Clean = U and U.Safe, U and U.Clean
 
-local WIDTH = 360
+local WIDTH = 400
 local GAP = 4 -- from the window
 local ROW = 20
 local ICON = 16
@@ -23,10 +22,7 @@ local texts, rows = {}, {} -- made once, used again at each drawing
 local used = { texts = 0, rows = 0 }
 local waiting = false -- items the game is still looking up: drawn again when they come
 
-local C = {
-	title = { 1, 0.82, 0 }, label = { 0.75, 0.68, 0.5 }, text = { 0.9, 0.88, 0.82 }, soft = { 0.7, 0.66, 0.58 },
-	ok = { 0.4, 0.87, 0.4 }, rule = { 1, 0.82, 0, 0.2 },
-}
+local C = W and W.Skin.COLORS -- (Wanderer's colors, by role)
 
 local function Todo() return W and W.AddTodo and (W.API or 1) >= 3 end
 local function Shopping()
@@ -113,26 +109,19 @@ local function Row()
 		row.icon:SetPoint("LEFT", row, "LEFT", 0, 0)
 		row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 		row.text = W.Skin.CreateText(row, "GameTooltipTextSmall", C.text[1], C.text[2], C.text[3])
-		if row.text.SetWordWrap then row.text:SetWordWrap(false) end
+		if row.text.SetWordWrap then row.text:SetWordWrap(true) end
 		row.links = {}
 		for index = 1, 2 do
 			local link = W.Skin.CreateLink(row, "", function(self) if self.run then self.run() end end)
 			link:Hide()
 			row.links[index] = link
 		end
-		row:SetScript("OnEnter", function(self)
-			if not self.item then return end
-			GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-			GameTooltip:SetItemByID(self.item)
-			GameTooltip:Show()
-		end)
-		row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		W.Skin.ItemTooltip(row, function(self) return self.item end)
 		rows[used.rows] = row
 	end
 	row:ClearAllPoints()
 	row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
 	row:SetPoint("RIGHT", content, "RIGHT", 0, 0)
-	y = y + ROW
 	row.item = nil
 	for _, link in ipairs(row.links) do link:Hide() end
 	row:Show()
@@ -152,9 +141,18 @@ local function Links(row, list)
 		link:Show()
 		previous = link
 	end
+	-- Its words between the icon and the links, on as many lines as they need (never cut): the row as tall.
+	local left = row.icon:IsShown() and ICON + 6 or 0
+	local right = 0
+	for _, link in ipairs(row.links) do
+		if link:IsShown() then right = right + link:GetWidth() - 2 end
+	end
 	row.text:ClearAllPoints()
-	row.text:SetPoint("LEFT", row.icon:IsShown() and row.icon or row, row.icon:IsShown() and "RIGHT" or "LEFT", row.icon:IsShown() and 6 or 0, 0)
-	row.text:SetPoint("RIGHT", previous or row, previous and "LEFT" or "RIGHT", -4, 0)
+	row.text:SetPoint("LEFT", row, "LEFT", left, 0)
+	row.text:SetWidth(math.max(60, content:GetWidth() - left - right - 6))
+	local height = math.max(ROW, U.Measure(row.text, "GetStringHeight", 14) + 6)
+	row:SetHeight(height)
+	y = y + height
 end
 
 local function Pin(who)
@@ -203,15 +201,14 @@ local function Draw()
 			local list = {}
 			if ask.kind == "Item" then
 				row.item = ask.id
-				local icon = Clean(Safe(C_Item and C_Item.GetItemIconByID, ask.id))
+				local icon = U.ItemIcon(ask.id)
 				row.icon:SetTexture(icon)
 				row.icon:Show()
 				if not ask.name then
 					missing = true
-					if C_Item and C_Item.RequestLoadItemDataByID then Safe(C_Item.RequestLoadItemDataByID, ask.id) end
+					U.LoadItem(ask.id)
 				end
-				local have = Clean(Safe(C_Item and C_Item.GetItemCount or GetItemCount, ask.id)) or 0
-				local count = (have >= ask.count and "|cff66dd66" or "|cffb0a080") .. math.min(have, ask.count) .. "/" .. ask.count .. "|r"
+				local count = U.HaveNeed(U.ItemCount(ask.id), ask.count)
 				row.text:SetText((ask.name or "…") .. "  " .. count)
 				local auction = Shopping()
 				if auction then
@@ -226,11 +223,65 @@ local function Draw()
 			Links(row, list)
 		end
 	end
+	-- What it gives: one item of a choice, items given, money. Each item says what it is worth to you
+	-- (Wanderer's comparison with what you wear, for your branch), or that your class cannot wear it.
+	-- (a quest of your log: its rewards read from the game first)
+	if ns.Status(quest) == "active" then ns.LearnLog(quest.id) end
+	local rewards = ns.Rewards(quest)
+	if rewards.choice[1] or rewards.given[1] or rewards.money > 0 then
+		Section(L.REWARDS)
+		if not rewards.seen then Line("GameTooltipTextSmall", C.muted, L.REWARDS_BASE, 2) end
+		local function Reward(item)
+			local row = Row()
+			row.item = item.id
+			row.icon:SetTexture(item.icon)
+			row.icon:Show()
+			if not item.name then missing = true end
+			local name = item.name or "..."
+			if item.count > 1 then name = L.COUNT:format(name, item.count) end
+			local words = U.Colorize(name, U.QualityColor(item.quality or 1))
+			local worth = item.link and W.UpgradeLines and W.UpgradeLines(item.link)[1]
+			if worth then
+				words = words .. "  " .. U.ColorCode(worth[2], worth[3], worth[4]) .. worth[1] .. "|r"
+			elseif item.link and W.CanWear and W.CanWear(item.link) == false then
+				words = "|cff808080" .. name .. "  " .. L.NOT_FOR_YOU .. "|r"
+			end
+			row.text:SetText(words)
+			Links(row, {})
+		end
+		if rewards.choice[1] then
+			Line("GameTooltipTextSmall", C.soft, rewards.choice[2] and L.REWARD_CHOICE or L.REWARD_GIVEN, 4)
+			for _, item in ipairs(rewards.choice) do Reward(item) end
+		end
+		if rewards.given[1] then
+			Line("GameTooltipTextSmall", C.soft, rewards.choice[1] and L.REWARD_ALSO or L.REWARD_GIVEN, 6)
+			for _, item in ipairs(rewards.given) do Reward(item) end
+		end
+		if rewards.money > 0 then Line("GameTooltipText", C.text, L.REWARD_MONEY:format(U.Coins(rewards.money)), 6) end
+	end
 	-- Who gives it, who takes it back.
 	Section(L.PEOPLE)
 	local giver, ender = ns.Giver(quest), ns.Ender(quest)
 	if giver then Someone(L["GIVER_" .. giver.kind:upper()], giver) end
 	if ender then Someone(L.ENDER, ender) end
+	-- What comes after it: each quest it opens, where you stand with it, and what still holds it back.
+	local after = ns.Next(quest)
+	if after[1] then
+		Section(L.NEXT)
+		for _, other in ipairs(after) do
+			local its = ns.Status(other)
+			local why = its == "level" and L.LEVEL:format(other.requiredLevel or 0) or L["STATUS_" .. its:upper()]
+			local row = Row()
+			row.icon:Hide()
+			local words = ns.QuestName(other) .. "  |cff9a9080" .. why .. "|r"
+			local holds = ns.Missing(other)
+			if holds[1] then words = words .. "\n|cff9a9080" .. L.STILL_NEEDS:format(table.concat(holds, other.any and " / " or ", ")) .. "|r" end
+			local from = ns.Giver(other)
+			if from and from.name then words = words .. "\n|cff9a9080" .. L["GIVER_" .. from.kind:upper()]:format(from.name) .. "|r" end
+			row.text:SetText(words)
+			Links(row, from and from.x and { Pin(from) } or {})
+		end
+	end
 	-- The quests before it.
 	local before = {}
 	for _, id in ipairs(quest.before) do
@@ -277,21 +328,13 @@ local function Create()
 	sheet:SetWidth(WIDTH)
 	sheet:EnableMouse(true)
 	local margin = W.Skin.Margin() + 8
-	local close = CreateFrame("Button", nil, sheet, "UIPanelCloseButton")
-	close:SetPoint("TOPRIGHT", sheet, "TOPRIGHT", -2, -2)
-	close:SetScript("OnClick", function() ns.HideSheet() end)
-	local kicker = W.Skin.CreateKicker(sheet, L.SHEET)
-	kicker:SetPoint("TOPLEFT", sheet, "TOPLEFT", margin, -margin)
-	sheet.title = W.Skin.CreateText(sheet, "GameTooltipHeaderText", C.title[1], C.title[2], C.title[3])
-	sheet.title:SetPoint("TOPLEFT", kicker, "BOTTOMLEFT", 0, -3)
+	W.Skin.CloseButton(sheet, function() ns.HideSheet() end)
+	local _, title = W.Skin.Header(sheet, L.SHEET)
+	sheet.title = title
 	sheet.title:SetPoint("RIGHT", sheet, "RIGHT", -margin - 18, 0)
 	if sheet.title.SetWordWrap then sheet.title:SetWordWrap(true) end
 	-- The buttons under.
-	sheet.allTodo = CreateFrame("Button", nil, sheet, "UIPanelButtonTemplate")
-	sheet.allTodo:SetText(L.ALL_TODO)
-	sheet.allTodo:SetSize(U.Measure(sheet.allTodo:GetFontString() or sheet.allTodo, "GetStringWidth", 120) + 30, 22)
-	sheet.allTodo:SetPoint("BOTTOMRIGHT", sheet, "BOTTOMRIGHT", -margin, margin)
-	sheet.allTodo:SetScript("OnClick", function()
+	sheet.allTodo = W.Skin.Button(sheet, L.ALL_TODO, function()
 		if not shown then return end
 		local any, added = false, false
 		for _, ask in ipairs(sheet.asks or {}) do
@@ -301,17 +344,15 @@ local function Create()
 		if not any then added = AddQuest(shown) end
 		Said(added)
 	end)
-	sheet.allShopping = CreateFrame("Button", nil, sheet, "UIPanelButtonTemplate")
-	sheet.allShopping:SetText(L.ALL_SHOPPING)
-	sheet.allShopping:SetSize(U.Measure(sheet.allShopping:GetFontString() or sheet.allShopping, "GetStringWidth", 120) + 30, 22)
-	sheet.allShopping:SetPoint("RIGHT", sheet.allTodo, "LEFT", -6, 0)
-	sheet.allShopping:SetScript("OnClick", function()
+	sheet.allTodo:SetPoint("BOTTOMRIGHT", sheet, "BOTTOMRIGHT", -margin, margin)
+	sheet.allShopping = W.Skin.Button(sheet, L.ALL_SHOPPING, function()
 		local auction = Shopping()
 		if not (auction and shown) then return end
 		for _, ask in ipairs(sheet.asks or {}) do
 			if ask.kind == "Item" then auction.AddToShopping(ask.id, ask.count, ns.QuestName(shown)) end
 		end
 	end)
+	sheet.allShopping:SetPoint("RIGHT", sheet.allTodo, "LEFT", -6, 0)
 	-- What it says, scrolled by the wheel.
 	scroll = CreateFrame("ScrollFrame", nil, sheet)
 	scroll:SetPoint("TOPLEFT", sheet.title, "BOTTOMLEFT", 0, -8)
@@ -325,14 +366,10 @@ local function Create()
 		self:SetVerticalScroll(math.max(0, math.min(most, self:GetVerticalScroll() - delta * 40)))
 	end)
 	-- Items the game had not yet: drawn again when they come; what you carry, as it changes.
+	local drawSoon = U.Debounce(0.2, function() if sheet:IsShown() then Draw() end end)
 	sheet:SetScript("OnEvent", function(_, event)
 		if event == "GET_ITEM_INFO_RECEIVED" and not waiting then return end
-		if sheet.soon then return end
-		sheet.soon = true
-		C_Timer.After(0.2, function()
-			sheet.soon = false
-			if sheet:IsShown() then Draw() end
-		end)
+		drawSoon()
 	end)
 	sheet:HookScript("OnShow", function(self)
 		self:RegisterEvent("GET_ITEM_INFO_RECEIVED")
