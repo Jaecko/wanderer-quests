@@ -1,0 +1,32 @@
+## Interface: 16001
+## Title: Wanderer Quests
+## Notes: The quests of your class, every dungeon and every zone, in chains: where you stand with each, what it asks, who gives it and where.
+## Notes-frFR: Les quêtes de votre classe, de chaque donjon et de chaque zone, en chaînes : où vous en êtes, ce que chacune demande, qui la donne et où.
+## Notes-deDE: Die Quests deiner Klasse, jedes Dungeons und jeder Zone, als Ketten: wo du stehst, was jede verlangt, wer sie vergibt und wo.
+## Notes-esES: Las misiones de tu clase, de cada mazmorra y de cada zona, en cadenas: dónde estás, qué pide cada una, quién la da y dónde.
+## Notes-esMX: Las misiones de tu clase, de cada mazmorra y de cada zona, en cadenas: dónde estás, qué pide cada una, quién la da y dónde.
+## Notes-itIT: Le missioni della tua classe, di ogni spedizione e di ogni zona, in catene: a che punto sei, cosa chiede ognuna, chi la dà e dove.
+## Notes-ptBR: As missões da sua classe, de cada masmorra e de cada zona, em cadeias: onde você está, o que cada uma pede, quem a dá e onde.
+## Notes-ruRU: Задания вашего класса, каждого подземелья и каждой зоны, цепочками: где вы, что требует каждое, кто его даёт и где.
+## Notes-koKR: 내 직업, 모든 던전과 모든 지역의 퀘스트를 연계로: 진행 상황, 각 퀘스트의 요구 사항, 주는 사람과 위치.
+## Notes-zhCN: 你的职业、每个地下城和每个区域的任务，按任务链排列：你的进度、每个任务的需求、谁给出以及在哪里。
+## Notes-zhTW: 你的職業、每個地城和每個區域的任務，依任務鏈排列：你的進度、每個任務的需求、誰給出以及在哪裡。
+## Category: Quests
+## Version: 0.1.0
+## X-Curse-Project-ID: 1746348
+## Author: Jaekco
+## IconTexture: Interface\Icons\INV_Misc_Book_09
+## RequiredDeps: Wanderer
+## OptionalDeps: WandererAuction
+## X-License: GPL-3.0-or-later
+## X-Website: https://wanderer-addon.com
+
+Locales.lua
+# Only English (the names fall back to it) and your language are loaded: [TextLocale] is your client's.
+Names_enUS.lua
+Names_[TextLocale].lua
+Texts_[TextLocale].lua
+QuestData.lua
+Data.lua
+Window.lua
+Sheet.lua
