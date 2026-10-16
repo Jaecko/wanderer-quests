@@ -79,4 +79,5 @@ ns.LOCALES.deDE = {
 		ADD_TODO_DESC = "In Wanderers Merkliste behalten, mit dem Weg dorthin oder wie viele du trägst.",
 		ADD_SHOPPING = "Zur Einkaufsliste",
 		ADD_SHOPPING_DESC = "Zur Einkaufsliste von Wanderer Auction hinzugefügt, für diese Quest.",
+		GEAR_COMPARE_OFF = "Wanderers Ausrüstungsvergleich ist ausgeschaltet (Wanderers Optionen, Tooltips: „Besser oder schlechter für deinen Zweig“): schalte ihn ein, um die besten Teile zu sehen.",
 }

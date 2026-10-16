@@ -12,7 +12,7 @@
 ## Notes-zhCN: 你的职业、每个地下城和每个区域的任务，按任务链排列：你的进度、每个任务的需求、谁给出以及在哪里。
 ## Notes-zhTW: 你的職業、每個地城和每個區域的任務，依任務鏈排列：你的進度、每個任務的需求、誰給出以及在哪裡。
 ## Category: Quests
-## Version: 0.3.0
+## Version: 0.3.1
 ## X-Curse-Project-ID: 1746348
 ## Author: Jaekco
 ## IconTexture: Interface\Icons\INV_Misc_Book_09

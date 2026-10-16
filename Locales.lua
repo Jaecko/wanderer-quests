@@ -82,6 +82,7 @@ local LOCALES = {
 		ADD_TODO_DESC = "Kept in Wanderer's reminders, with where to go or how many you carry.",
 		ADD_SHOPPING = "Add to shopping list",
 		ADD_SHOPPING_DESC = "Added to Wanderer Auction's shopping list, for this quest.",
+		GEAR_COMPARE_OFF = "Wanderer's comparison of your gear is turned off (Wanderer's options, Tooltips: \"Better or worse for your branch\"): turn it on to see the best pieces.",
 	},
 }
 -- The client's language comes in its own file, loaded after this one (Locales/<code>.lua).

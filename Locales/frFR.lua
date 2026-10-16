@@ -79,4 +79,5 @@ ns.LOCALES.frFR = {
 		ADD_TODO_DESC = "Gardé dans le pense-bête de Wanderer, avec où aller ou combien vous en portez.",
 		ADD_SHOPPING = "Ajouter à la liste d'achats",
 		ADD_SHOPPING_DESC = "Ajouté à la liste d'achats de Wanderer Auction, pour cette quête.",
+		GEAR_COMPARE_OFF = "La comparaison d'équipement de Wanderer est désactivée (options de Wanderer, Infobulles : « Mieux ou moins bien pour votre branche ») : activez-la pour voir les meilleures pièces.",
 }

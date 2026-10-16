@@ -79,4 +79,5 @@ ns.LOCALES.zhCN = {
 		ADD_TODO_DESC = "保存在 Wanderer 的备忘中，附带去处或你携带的数量。",
 		ADD_SHOPPING = "加入购物清单",
 		ADD_SHOPPING_DESC = "为此任务加入 Wanderer Auction 的购物清单。",
+		GEAR_COMPARE_OFF = "Wanderer 的装备比较已关闭（Wanderer 选项，鼠标提示：“对你的天赋系更好或更差”）：开启它即可查看最佳装备。",
 }

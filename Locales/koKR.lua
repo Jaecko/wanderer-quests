@@ -79,4 +79,5 @@ ns.LOCALES.koKR = {
 		ADD_TODO_DESC = "Wanderer 알림에 저장됩니다: 갈 곳이나 지닌 개수와 함께.",
 		ADD_SHOPPING = "구매 목록에 추가",
 		ADD_SHOPPING_DESC = "이 퀘스트를 위해 Wanderer Auction 구매 목록에 추가됩니다.",
+		GEAR_COMPARE_OFF = "Wanderer의 장비 비교가 꺼져 있습니다 (Wanderer 설정, 툴팁: \"전문화에 더 좋은지 나쁜지\"): 최고의 장비를 보려면 켜세요.",
 }

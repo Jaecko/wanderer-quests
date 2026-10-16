@@ -79,4 +79,5 @@ ns.LOCALES.ptBR = {
 		ADD_TODO_DESC = "Guardado nos lembretes do Wanderer, com aonde ir ou quantos você carrega.",
 		ADD_SHOPPING = "Adicionar à lista de compras",
 		ADD_SHOPPING_DESC = "Adicionado à lista de compras do Wanderer Auction, para esta missão.",
+		GEAR_COMPARE_OFF = "A comparação de equipamento do Wanderer está desativada (opções do Wanderer, Dicas: \"Melhor ou pior para o seu ramo\"): ative-a para ver as melhores peças.",
 }

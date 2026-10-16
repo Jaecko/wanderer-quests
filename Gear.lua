@@ -130,6 +130,11 @@ function ns.DrawGear()
 	if not view then return end
 	view.chosen = W.PlayChoice and W.PlayChoice() ~= nil
 	view.play:Refresh()
+	-- (Wanderer's comparison turned off: nothing is judged, said so)
+	local tooltips = W.Settings and W.Settings("tooltips")
+	local compared = tooltips and tooltips.upgrade
+	if not compared then view.chosen = false end
+	view.pick:SetText(compared and L.GEAR_PICK or L.GEAR_COMPARE_OFF)
 	view.pick:SetShown(not view.chosen)
 	local now = Current()
 	local projected = {}

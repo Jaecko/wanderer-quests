@@ -459,6 +459,11 @@ local Redraw = U and U.Debounce and U.Debounce(0.3, function()
 	if window and window:IsShown() then DrawQuests() end
 end)
 
+-- A reward arrived on the gear tab: the gear read again, only it (once, a moment after).
+local GearAgain = U and U.Debounce and U.Debounce(0.5, function()
+	if window and window:IsShown() and kind == "gear" then Fill() end
+end)
+
 -- Near a dungeon (in the zone of its entrance), at its levels, with quests of it to take: said once a
 -- session, quietly (an option, off).
 local told = {}
@@ -483,7 +488,7 @@ local function NearDungeon()
 end
 
 local events = CreateFrame("Frame")
-events:SetScript("OnEvent", function(_, event)
+events:SetScript("OnEvent", function(_, event, ...)
 	if event == "ZONE_CHANGED_NEW_AREA" then return NearDungeon() end
 	-- (the game's quest windows loaded later: the buttons put there then)
 	if event == "ADDON_LOADED" then
@@ -491,10 +496,12 @@ events:SetScript("OnEvent", function(_, event)
 		return
 	end
 	if event == "GET_ITEM_INFO_RECEIVED" then -- (heard only while the window is shown)
-		-- (a reward arrived: the gear tab read again, all of it)
+		-- (a reward arrived: the gear tab read again, only it; an item the server could not send: nothing)
+		local _, success = ...
+		if success == false then return end
 		if kind == "gear" then
 			ns.ForgetGear()
-			if Again and window and window:IsShown() then Again() end
+			if GearAgain and window and window:IsShown() then GearAgain() end
 		elseif Redraw and window and window:IsShown() then
 			Redraw()
 		end
