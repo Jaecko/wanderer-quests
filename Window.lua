@@ -19,7 +19,6 @@ local ROW = 24
 local LEFT_WIDTH = 290
 local GAP = 24
 local TOP = 70 -- the heading, above the lists
-local BOTTOM = 18 -- the credit, under them
 local HEADER = 46 -- the place chosen, above its quests
 local MAX_ROWS = 44 -- rows made once; those that fit are shown
 local INDENT = 14
@@ -30,18 +29,19 @@ local STATUS = {
 	done = { 0.45, 0.75, 0.45 }, passed = { 0.45, 0.75, 0.45 }, active = { 1, 0.82, 0 }, available = { 1, 1, 1 },
 	locked = { 0.55, 0.55, 0.55 }, level = { 1, 0.4, 0.35 }, closed = { 0.45, 0.45, 0.45 },
 }
+ns.STATUS_COLORS = STATUS -- (the quest sheet's too)
 local FAINT = { 0.55, 0.5, 0.44 }
 -- The bags' green arrow (the game's), else a green plus.
 local UPGRADE = CreateAtlasMarkup and CreateAtlasMarkup("bags-greenarrow", 12, 12) or "|cff40ff40+|r"
 
-local window, dungeonList, questList, header
+local window, dungeonList, questList, header, gearView
 local wantedQuest -- a quest asked from the game's log: chosen when its place is drawn
 local places, tree = {}, {}
 local chosenDungeon, chosenQuest = nil, nil
 local kind -- the tab shown: "class", "dungeons" or "zones" (the last one shown, kept)
 local chosenBy = {} -- each tab: the place chosen (its id)
 local tabs = {}
-local TABS = { { "class", "TAB_CLASS" }, { "dungeons", "TAB_DUNGEONS" }, { "zones", "TAB_ZONES" } }
+local TABS = { { "class", "CLASS" }, { "dungeons", "DUNGEONS" }, { "zones", "TAB_ZONES" }, { "gear", "GEAR" } }
 
 -- A tab's name: the class one says your class.
 local function TabName(tab)
@@ -56,12 +56,8 @@ local function Settings() return W and W.Settings and W.Settings("quests") or ni
 
 local function Colorize(text, c) return U.Colorize(text, c[1], c[2], c[3]) end
 
--- A quest level's difficulty color, the game's.
-local function Difficulty(level)
-	local color = GetQuestDifficultyColor and GetQuestDifficultyColor(level or 1)
-	if not color then return { 1, 1, 1 } end
-	return { color.r or 1, color.g or 1, color.b or 1 }
-end
+-- A quest level's difficulty color, as the game's quest log colors it (Wanderer's rule).
+local function Difficulty(level) return { W.QuestLevelColor(level or 1) } end
 
 local function StatusText(node)
 	local status = node.status
@@ -86,6 +82,9 @@ local function DrawQuests()
 			-- A reward better for you: the green arrow (not on a quest behind you).
 			local better = not done and node.status ~= "closed" and ns.RewardUpgrade(node.quest)
 			if better then node.name = node.name .. "  " .. UPGRADE end
+			-- (the gear tab: how much better, beside it)
+			local gain = kind == "gear" and node.dungeon and ns.GearGain(node.quest.id)
+			if gain then node.name = node.name .. "  " .. U.Colorize("+" .. gain.gain .. " %", 0.56, 0.88, 0.64) end
 			-- (hovered: its whole name, where you stand, its levels)
 			node.tip = { ns.QuestName(node.quest), StatusText(node),
 				L.LEVELS_LINE:format(node.quest.questLevel or 0, node.quest.requiredLevel or 0), better and L.HAS_UPGRADE or nil }
@@ -136,7 +135,8 @@ local function ShowDungeon()
 	tree = ns.Tree(entry.dungeon.id, kind)
 	header.name:SetText(entry.dungeon.name)
 	local entrance = kind == "dungeons" and ns.Entrance(entry.dungeon) or nil
-	local around = kind == "dungeons" and ns.AreaName(entry.dungeon.zone) or kind == "class" and TabName(TABS[1]) or ""
+	local around = kind == "dungeons" and ns.AreaName(entrance and entrance.area or entry.dungeon.zone) or kind == "class" and TabName(TABS[1])
+		or kind == "gear" and L.GEAR_NOTE or ""
 	header.entrance:SetText(entrance and L.ENTRANCE:format(L.WHERE:format(around or "?", entrance.x, entrance.y)) or around or "")
 	header.pin:SetShown(entrance ~= nil)
 	questList.empty:SetShown(#tree == 0)
@@ -199,21 +199,30 @@ local function DrawTabs()
 		local link, label = tabs[tab[1]], TabName(tab)
 		if link then link:SetLabel(tab[1] == kind and Colorize(label, Skin.COLORS.gold) or label) end
 	end
-	window.pick:SetText(kind == "zones" and L.PICK_ZONE or kind == "class" and L.PICK_CLASS or L.PICK)
-	questList.empty:SetText(kind == "zones" and L.NONE_ZONE or kind == "class" and L.NONE_CLASS or L.NONE)
+	window.pick:SetText(kind == "zones" and L.PICK_ZONE or kind == "class" and L.PICK_CLASS or kind == "gear" and L.PICK_GEAR or L.PICK)
+	questList.empty:SetText(kind == "zones" and L.NONE_ZONE or kind == "class" and L.NONE_CLASS or kind == "gear" and L.NONE_GEAR or L.NONE)
 end
 
 -- Every place of the tab with quests for you, by level (where you stand as last read: ns.ReadYou).
 local function Fill()
 	kind = kind or (Settings() and Settings().tab) or "class"
 	DrawTabs()
+	-- The gear tab: two character sheets in place of the places and their quests.
+	local gear = kind == "gear"
+	dungeonList:SetShown(not gear)
+	window.rule:SetShown(not gear)
+	window.right:SetShown(not gear)
+	gearView:SetShown(gear)
+	if gear then return ns.DrawGear() end
 	places = {}
 	for _, dungeon in ipairs(ns.Places(kind)) do
 		-- (its summary only: the tree is made for the place chosen)
 		local levels = ns.Summary(dungeon.id, kind)
 		if levels.total > 0 then places[#places + 1] = { dungeon = dungeon, levels = levels } end
 	end
+	-- (the slots of your gear in their order; the places by level)
 	table.sort(places, function(a, b)
+		if a.dungeon.order or b.dungeon.order then return (a.dungeon.order or 0) < (b.dungeon.order or 0) end
 		if a.levels.low ~= b.levels.low then return (a.levels.low or 0) < (b.levels.low or 0) end
 		return a.dungeon.name < b.dungeon.name
 	end)
@@ -256,7 +265,7 @@ end
 local function Fit()
 	if not window then return end
 	local margin = Skin.Margin() + 8
-	local height = window:GetHeight() - (margin + TOP) - (margin + BOTTOM)
+	local height = window:GetHeight() - (margin + TOP) - margin
 	dungeonList:Fit(height)
 	questList:Fit(height - HEADER)
 end
@@ -266,6 +275,8 @@ local function Shown()
 	if not ns.HasData() then return end
 	ns.ReadYou()
 	ns.LearnAllLog()
+	-- (your gear, role or weights may have changed meanwhile)
+	if kind == "gear" then ns.ForgetGear() end
 	Fill()
 end
 
@@ -274,7 +285,7 @@ local function Create()
 	Skin.Dress(window, { "CENTER", UIParent, "CENTER", 0, 40 }, "questsWindow")
 	local saved = Settings() and Settings().size
 	window:SetSize(Skin.Within(saved and saved[1] or WIDTH, MIN_WIDTH, MAX_WIDTH), Skin.Within(saved and saved[2] or HEIGHT, MIN_HEIGHT, MAX_HEIGHT))
-	local _, title, margin = Skin.Header(window, "Wanderer", L.TITLE)
+	local _, title, margin = Skin.Header(window, "Wanderer", L.QUESTS)
 	local previous
 	for _, tab in ipairs(TABS) do
 		local link = Skin.CreateLink(window, TabName(tab), function()
@@ -292,12 +303,14 @@ local function Create()
 	})
 	dungeonList:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -(margin + TOP))
 	local rule = Skin.Rule(window, true, 0.2)
+	window.rule = rule
 	rule:SetPoint("TOPLEFT", dungeonList, "TOPRIGHT", GAP / 2, 0)
-	rule:SetPoint("BOTTOM", window, "BOTTOM", 0, margin + BOTTOM)
+	rule:SetPoint("BOTTOM", window, "BOTTOM", 0, margin)
 	-- Right: the place chosen, its quests.
 	local right = CreateFrame("Frame", nil, window)
+	window.right = right
 	right:SetPoint("TOPLEFT", dungeonList, "TOPRIGHT", GAP, 0)
-	right:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -margin, margin + BOTTOM)
+	right:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -margin, margin)
 	window.pick = Skin.Text(right, "GameTooltipText", "muted")
 	window.pick:SetPoint("TOP", right, "TOP", 0, -60)
 	window.pick:SetText(L.PICK)
@@ -310,11 +323,16 @@ local function Create()
 	header.name:SetPoint("TOPLEFT")
 	header.entrance = Skin.Text(header, "GameTooltipTextSmall", "label")
 	header.entrance:SetPoint("TOPLEFT", header.name, "BOTTOMLEFT", 0, -4)
-	header.pin = Skin.CreateLink(header, L.PIN, function()
+	-- (the way to its door: the game's own pin, followed on the map and the minimap)
+	header.pin = Skin.Button(header, L.PIN_ENTRANCE, function()
 		local entrance = chosenDungeon and ns.Entrance(chosenDungeon.dungeon)
 		if entrance and not ns.PinMap(entrance.map, entrance.x, entrance.y) and W.Print then W.Print(L.PIN_FAILED) end
-	end, L.PIN_DESC)
-	header.pin:SetPoint("LEFT", header.entrance, "RIGHT", 4, 0)
+	end)
+	header.pin:SetHeight(24)
+	header.pin:SetPoint("TOPRIGHT", header, "TOPRIGHT", 0, -2)
+	Skin.Tooltip(header.pin, L.PIN_DESC)
+	header.name:SetPoint("RIGHT", header.pin, "LEFT", -10, 0)
+	header.name:SetJustifyH("LEFT")
 	questList = Skin.Table(right, {
 		width = WIDTH - LEFT_WIDTH - GAP - margin * 2, rows = MAX_ROWS, rowHeight = ROW, titles = false, icon = false,
 		onClick = ChooseQuest, onDraw = DrawQuests, columns = { { key = "status", width = 140 } },
@@ -323,10 +341,10 @@ local function Create()
 	questList:SetPoint("RIGHT", right, "RIGHT", 0, 0)
 	questList.empty:SetText(L.NONE)
 	questList:Hide()
-	-- Where the quests come from.
-	local source = Skin.Text(window, "GameTooltipTextSmall", "muted")
-	source:SetPoint("BOTTOMLEFT", window, "BOTTOMLEFT", margin, margin)
-	source:SetText(L.SOURCE)
+	-- The gear tab's sheets, across the window.
+	gearView = ns.GearView(window, window:GetWidth() - margin * 2)
+	gearView:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -(margin + TOP))
+	gearView:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -margin, margin)
 	-- Its corner: dragged, the window grows or shrinks, the lists with it; its size and place kept.
 	Skin.Resizable(window, {
 		minWidth = MIN_WIDTH, minHeight = MIN_HEIGHT, maxWidth = MAX_WIDTH, maxHeight = MAX_HEIGHT,
@@ -350,6 +368,8 @@ local function Create()
 	window:HookScript("OnHide", function() if ns.HearItems then ns.HearItems(false) end end)
 	Skin.Get(window):Layout()
 end
+
+function ns.Window() return window end
 
 function ns.Toggle()
 	if not window then Create() end
@@ -471,9 +491,16 @@ events:SetScript("OnEvent", function(_, event)
 		return
 	end
 	if event == "GET_ITEM_INFO_RECEIVED" then -- (heard only while the window is shown)
-		if Redraw and window and window:IsShown() then Redraw() end
+		-- (a reward arrived: the gear tab read again, all of it)
+		if kind == "gear" then
+			ns.ForgetGear()
+			if Again and window and window:IsShown() then Again() end
+		elseif Redraw and window and window:IsShown() then
+			Redraw()
+		end
 		return
 	end
+	if event == "PLAYER_EQUIPMENT_CHANGED" or event == "PLAYER_LEVEL_UP" or event == "QUEST_TURNED_IN" then ns.ForgetGear() end
 	if Again and window and window:IsShown() then Again() end
 end)
 
@@ -484,15 +511,22 @@ end
 
 function ns.Init()
 	if not (W and W.RegisterExtension) then return end
-	if (W.API or 1) < 4 then return W.Print(L.NEEDS_WANDERER) end
+	if (W.API or 1) < 6 then return W.Print(L.NEEDS_WANDERER) end
+	-- (a weight, what you play, your talents changed: the gear judged again, at once when shown)
+	W.OnComparisonChanged(function()
+		ns.ForgetGear()
+		if window and window:IsShown() then Shown() end
+	end)
 	W.RegisterExtension({
 		key = "quests",
-		title = L.TITLE,
+		addon = ADDON,
+		title = L.QUESTS,
+		news = L.NEWS_LINES,
 		defaults = { remind = false },
-		launcher = { label = L.TITLE, open = function() ns.Toggle() end },
+		launcher = { label = L.QUESTS, open = function() ns.Toggle() end },
 		options = function(o)
-			o.Header(L.TITLE)
-			o.Button(L.TITLE, L.OPEN_BUTTON, L.OPEN_DESC, function()
+			o.Header(L.QUESTS)
+			o.Button(L.QUESTS, L.OPEN, L.OPEN_DESC, function()
 				o.CloseSettings()
 				ns.Open()
 			end)
@@ -501,7 +535,8 @@ function ns.Init()
 	})
 	SLASH_WANDERERQUESTS1 = "/wquests"
 	SlashCmdList.WANDERERQUESTS = function() ns.Toggle() end
-	for _, event in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA" }) do
+	for _, event in ipairs({ "QUEST_TURNED_IN", "QUEST_ACCEPTED", "QUEST_REMOVED", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA",
+		"PLAYER_EQUIPMENT_CHANGED" }) do
 		pcall(events.RegisterEvent, events, event)
 	end
 	if not Attach() then events:RegisterEvent("ADDON_LOADED") end

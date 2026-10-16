@@ -1,14 +1,12 @@
-# Wanderer Quests 0.2.0
+# Wanderer Quests 0.3.0
 
 ### New
-- A quest's rewards as the game gives them, all the choices included, learned when you see the quest; a green arrow on the quests whose reward is better for you.
-- Its sheet says what comes next (the follow-up and who gives it) and what a quest still needs before you can take it.
-- "Open in Quests" beside a quest's details in the game's quest log, and in the right-click menus of the log and the objective tracker: the quest shown here, its sheet open.
-- Near a dungeon, at its levels, a quiet notice says how many of its quests you could still take before going in (an option, off).
+- A Gear tab: two character sheets side by side, what you wear and the best piece your quests can give for each slot, how much better, a click opening the quest.
+- What you play, chosen at the top of the gear sheet and kept for each character: the best pieces are judged for it.
+- "Pin the entrance" for every dungeon and raid, even where the game gives no entrance: the way to its door on your map and minimap.
 
 ### Changed
-- Easier to read: a less transparent window, long names and texts wrapped instead of cut. The window can be resized by its corner.
-- Needs Wanderer 0.42 or later.
-
-### Fixed
-- A quest done whose follow-up you had not received yet: its follow-up and where to find it are now shown.
+- A quest's sheet easier to read: nothing cut, every action a real button under what it is about, where you stand and the levels at the top.
+- Quest colors as your quest log shows them.
+- The gear tab follows a change of your weights or of what you play at once, without a reload.
+- Needs Wanderer 0.43 or later.

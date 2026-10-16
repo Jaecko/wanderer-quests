@@ -9,6 +9,9 @@ Its quest data (QuestData.lua and Names_*.lua) is generated from:
 - pfQuest by Shagu, https://github.com/shagu/pfQuest (MIT licence, below): who gives each quest, where they
   stand, and the names of the quests and the givers in nine languages.
 
+The dungeon entrances (Data.lua) are where their meeting stones stand: the stone's dungeon from CMaNGOS, its
+position from pfQuest.
+
 World of Warcraft and its content are trademarks and copyrights of Blizzard Entertainment.
 
 ## pfQuest licence

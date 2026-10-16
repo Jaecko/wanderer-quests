@@ -489,16 +489,11 @@ end
 -- Maps ------------------------------------------------------------------------------------------
 
 -- An area's name in your language (without what the game may add in parentheses, its English name).
-function ns.AreaName(area)
-	local name = area and Clean(Safe(C_Map and C_Map.GetAreaInfo, area))
-	return name and (name:gsub("%s*%b()", "")) or nil
-end
+ns.AreaName = U.AreaName
 
 -- A place's name made comparable: lower case, without what the game adds in parentheses ("Les Paluns
 -- (Wetlands)" is the map "Les Paluns").
-local function Plain(name)
-	return (name:gsub("%s*%b()", ""):gsub("^%s+", ""):gsub("%s+$", ""):lower())
-end
+local Plain = U.PlainName
 ns.Plain = Plain
 
 -- The game's maps of zones, by their names (in your language, as the areas' names are).
@@ -570,10 +565,28 @@ function ns.Zones()
 	return zones
 end
 
--- Its entrance, as the game's dungeon journal places it on the map around it: { map, x, y } or nil.
+-- Where each entrance stands when the game's journal does not say: dungeon area -> { the zone it stands in,
+-- x, y }. The meeting stone at its door (CMaNGOS and pfQuest, see CREDITS.md); the raids without one by hand
+-- (Molten Core and Blackwing Lair: Blackrock Mountain's door, from the Burning Steppes).
+local ENTRANCES = {
+	[2437] = { 1637, 51.4, 48.7 }, [718] = { 17, 47, 35.6 }, [1581] = { 40, 41.6, 72.4 }, [209] = { 130, 46.2, 68.4 },
+	[719] = { 331, 15.4, 15.6 }, [717] = { 1519, 43.4, 59.3 }, [133] = { 1, 24.3, 40.4 }, [1717] = { 17, 43.7, 90 },
+	[796] = { 85, 82.1, 39.2 }, [722] = { 17, 45.2, 88.6 }, [1517] = { 3, 49.1, 13.7 }, [978] = { 440, 38.5, 20.7 },
+	[2100] = { 405, 31.5, 62.4 }, [1417] = { 8, 69.1, 54.7 }, [1584] = { 46, 29.8, 28.7 }, [1583] = { 46, 32.8, 30.4 },
+	[2557] = { 357, 58, 44.5 }, [2017] = { 139, 30.9, 16.6 }, [2057] = { 28, 69.5, 74.5 },
+	[2717] = { 46, 29.8, 28.7 }, [2677] = { 46, 32.8, 30.4 }, [2159] = { 15, 52.6, 76.8 }, [1977] = { 33, 53.9, 17.6 },
+	[3429] = { 1377, 28.6, 92.4 }, [3428] = { 1377, 28.6, 92.4 },
+}
+
+-- Its entrance: { map, x, y, area (the zone it stands in) } or nil. As the game's dungeon journal places it,
+-- else where it is known to stand.
 function ns.Entrance(dungeon)
 	if dungeon.entrance ~= nil then return dungeon.entrance or nil end
 	dungeon.entrance = false
+	local known = ENTRANCES[dungeon.id]
+	if known and MapOfArea(known[1]) then
+		dungeon.entrance = { map = MapOfArea(known[1]), x = known[2], y = known[3], area = known[1] }
+	end
 	local map = MapOfArea(dungeon.zone)
 	local journal = C_EncounterJournal
 	local list = map and journal and Safe(journal.GetDungeonEntrancesForMap, map)
@@ -590,12 +603,13 @@ function ns.Entrance(dungeon)
 		end
 		only = only == nil and entrance or false
 	end
-	local found = named or near or only or nil
+	-- (the only entrance of the map: only when none is known by hand, it may be another dungeon's)
+	local found = named or near or (not known and only) or nil
 	local position = found and found.position
 	if position then
 		local x, y = Safe(position.GetXY, position)
 		x, y = Clean(x), Clean(y)
-		if x and y then dungeon.entrance = { map = map, x = x * 100, y = y * 100 } end
+		if x and y then dungeon.entrance = { map = map, x = x * 100, y = y * 100, area = dungeon.zone } end
 	end
 	return dungeon.entrance or nil
 end
@@ -635,7 +649,78 @@ local function ClassBands()
 end
 
 -- The places of a kind: "class" (bands of levels), "dungeons" (and raids) or "zones".
+-- Gear ----------------------------------------------------------------------------------------------------
+-- The quests whose reward is better for you: from GEAR_BELOW levels under yours to GEAR_ABOVE over it (a quest
+-- far above says nothing yet, one far below is grey), for you, not done; grouped by the slot of their best
+-- reward (Wanderer's comparison), the best gain first. Read again when asked after a change (ns.ForgetGear).
+local GEAR_ABOVE, GEAR_BELOW = 3, 6
+local GEAR_SLOTS = {
+	{ "head", { "INVTYPE_HEAD" } }, { "neck", { "INVTYPE_NECK" } }, { "shoulder", { "INVTYPE_SHOULDER" } },
+	{ "back", { "INVTYPE_CLOAK" } }, { "chest", { "INVTYPE_CHEST", "INVTYPE_ROBE" } }, { "wrist", { "INVTYPE_WRIST" } },
+	{ "hand", { "INVTYPE_HAND" } }, { "waist", { "INVTYPE_WAIST" } }, { "legs", { "INVTYPE_LEGS" } },
+	{ "feet", { "INVTYPE_FEET" } }, { "finger", { "INVTYPE_FINGER" } }, { "trinket", { "INVTYPE_TRINKET" } },
+	{ "weapons", { "INVTYPE_WEAPON", "INVTYPE_2HWEAPON", "INVTYPE_WEAPONMAINHAND", "INVTYPE_WEAPONOFFHAND" } },
+	{ "offhand", { "INVTYPE_SHIELD", "INVTYPE_HOLDABLE" } },
+	{ "ranged", { "INVTYPE_RANGED", "INVTYPE_RANGEDRIGHT", "INVTYPE_THROWN", "INVTYPE_RELIC" } },
+}
+-- (the game names each slot; these three are groups of its own)
+local OWN = { weapons = "GEAR_WEAPONS", offhand = "GEAR_OFFHAND", ranged = "GEAR_RANGED" }
+local SLOT_OF = {}
+for order, slot in ipairs(GEAR_SLOTS) do
+	for _, equip in ipairs(slot[2]) do SLOT_OF[equip] = { key = slot[1], order = order, equip = slot[2][1] } end
+end
+
+local gear -- { places, ids = slot -> quest ids, gain = quest id -> { gain, link } }
+function ns.ForgetGear() gear = nil end
+
+local function Gear()
+	if gear then return gear end
+	gear = { places = {}, ids = {}, gain = {} }
+	if not (W.PlayChoice and W.PlayChoice()) then return gear end
+	local level = ns.YourLevel()
+	for id, row in pairs(ns.QUESTS or EMPTY) do
+		local questLevel = row.lvl or 0
+		if (row.rc or row.rg) and questLevel <= level + GEAR_ABOVE and questLevel >= level - GEAR_BELOW then
+			local quest = ns.Quest(id)
+			local status = ns.ForYou(quest) and ns.Status(quest)
+			if status and status ~= "done" and status ~= "passed" and status ~= "closed" then
+				local rewards = ns.Rewards(quest)
+				local best
+				for _, list in ipairs({ rewards.choice, rewards.given }) do
+					for _, item in ipairs(list) do
+						local gain = item.link and W.UpgradeGain and W.UpgradeGain(item.link)
+						if gain and (not best or gain > best.gain) then best = { gain = gain, link = item.link } end
+					end
+				end
+				local equip = best and select(4, U.ItemInstant(best.link))
+				local slot = equip and SLOT_OF[U.Clean(equip)]
+				if slot then
+					best.slot = slot.key
+					gear.gain[id] = best
+					if not gear.ids[slot.key] then
+						gear.ids[slot.key] = {}
+						gear.places[#gear.places + 1] = { id = slot.key, order = slot.order,
+							name = OWN[slot.key] and ns.L[OWN[slot.key]] or _G[slot.equip] or slot.key }
+					end
+					table.insert(gear.ids[slot.key], id)
+				end
+			end
+		end
+	end
+	for _, ids in pairs(gear.ids) do
+		table.sort(ids, function(a, b) return gear.gain[a].gain > gear.gain[b].gain end)
+	end
+	table.sort(gear.places, function(a, b) return a.order < b.order end)
+	return gear
+end
+
+-- How much better a quest's best reward is for you (and its link), when it is.
+function ns.GearGain(id) return Gear().gain[id] end
+-- A slot's quests, the best gain first.
+function ns.GearQuestIds(slot) return Gear().ids[slot] or EMPTY end
+
 function ns.Places(kind)
+	if kind == "gear" then return Gear().places end
 	if kind == "class" then return ClassBands() end
 	return kind == "zones" and ns.Zones() or ns.Dungeons()
 end
@@ -671,6 +756,7 @@ end
 
 -- The quests of a place.
 local function QuestIds(place, kind)
+	if kind == "gear" then return Gear().ids[place] or EMPTY end
 	if kind == "class" then
 		local band = ClassBands()[place]
 		return band and band.ids or EMPTY
