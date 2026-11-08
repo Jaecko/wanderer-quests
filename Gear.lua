@@ -7,8 +7,8 @@ local L = ns.L
 -- characteristics if you wore them all. A click on a piece opens its quest's sheet: what to do, where.
 
 local W = Wanderer
-local U = W and W.Util
-local Skin = W and W.Skin
+local U = W.Util
+local Skin = W.Skin
 
 local ROW = 36
 local SIDE_GAP = 30
@@ -74,24 +74,40 @@ local function Sheet(parent, title, width)
 	sheet.title = Skin.Caps(sheet, title, "gold")
 	sheet.title:SetPoint("TOPLEFT")
 	sheet.slots = {}
-	local column = (width - 12) / 2
 	for index, list in ipairs(COLUMNS) do
-		for row, spec in ipairs(list) do
+		for _, spec in ipairs(list) do
 			local slot = Slot(sheet)
-			slot:SetWidth(column)
-			slot:SetPoint("TOPLEFT", sheet, "TOPLEFT", (index - 1) * (column + 12), -(18 + (row - 1) * ROW))
-			slot.spec = spec
+			slot.spec, slot.column = spec, index
 			sheet.slots[#sheet.slots + 1] = slot
 		end
 	end
 	sheet.stats = {}
-	local top = -(18 + #COLUMNS[1] * ROW + 12)
 	for index, stat in ipairs(STATS) do
 		local line = Skin.Text(sheet, "GameTooltipTextSmall", "soft")
-		line:SetPoint("TOPLEFT", sheet, "TOPLEFT", ((index - 1) % 3) * (width / 3), top - math.floor((index - 1) / 3) * 16)
 		line.stat = stat
 		sheet.stats[index] = line
 	end
+	-- Its pieces placed for a width (again when the window changes).
+	function sheet:Resize(newWidth)
+		self:SetWidth(newWidth)
+		local column = (newWidth - 12) / 2
+		local rows = {}
+		for _, slot in ipairs(self.slots) do
+			rows[slot.column] = (rows[slot.column] or 0) + 1
+			slot:SetWidth(column)
+			slot:ClearAllPoints()
+			slot:SetPoint("TOPLEFT", self, "TOPLEFT", (slot.column - 1) * (column + 12), -(18 + (rows[slot.column] - 1) * ROW))
+		end
+		local top = -(18 + #COLUMNS[1] * ROW + 12)
+		for index, line in ipairs(self.stats) do
+			line:ClearAllPoints()
+			line:SetPoint("TOPLEFT", self, "TOPLEFT", ((index - 1) % 3) * (newWidth / 3), top - math.floor((index - 1) / 3) * 16)
+			line:SetWidth(newWidth / 3 - 6)
+			line:SetJustifyH("LEFT")
+			line:SetWordWrap(false)
+		end
+	end
+	sheet:Resize(width)
 	return sheet
 end
 
@@ -131,11 +147,12 @@ function ns.DrawGear()
 	view.chosen = W.PlayChoice and W.PlayChoice() ~= nil
 	view.play:Refresh()
 	-- (Wanderer's comparison turned off: nothing is judged, said so)
-	local tooltips = W.Settings and W.Settings("tooltips")
-	local compared = tooltips and tooltips.upgrade
+	local compared = W.ComparisonOn and W.ComparisonOn()
 	if not compared then view.chosen = false end
 	view.pick:SetText(compared and L.GEAR_PICK or L.GEAR_COMPARE_OFF)
 	view.pick:SetShown(not view.chosen)
+	for _, slot in ipairs(view.quests.slots) do slot:SetShown(view.chosen) end
+	for _, line in ipairs(view.quests.stats) do line:SetShown(view.chosen) end
 	local now = Current()
 	local projected = {}
 	for key, value in pairs(now) do projected[key] = value end
@@ -143,13 +160,13 @@ function ns.DrawGear()
 	for index, slot in ipairs(view.worn.slots) do
 		local id, group, which = slot.spec[1], slot.spec[2], slot.spec[3] or 1
 		local worn = U.Clean(U.Safe(GetInventoryItemLink, "player", id))
-		Fill(slot, worn, worn and "" or U.Colorize(L.GEAR_EMPTY, unpack(Skin.COLORS.muted)))
+		Fill(slot, worn, worn and "" or Skin.Colorize(L.GEAR_EMPTY, "muted"))
 		local target = view.quests.slots[index]
 		local piece = best[group] and best[group][which]
 		target.quest = piece and piece.id
 		if piece then
 			local quest = ns.Quest(piece.id)
-			Fill(target, piece.link, U.Colorize("+" .. piece.gain .. " %", 0.56, 0.88, 0.64) .. "  " .. (quest and ns.QuestName(quest) or ""),
+			Fill(target, piece.link, Skin.Colorize(L.GEAR_GAIN:format(piece.gain), "good") .. "  " .. (quest and ns.QuestName(quest) or ""),
 				true)
 			-- (what it would change: its stats against what you wear there)
 			local mine, theirs = U.ItemStats(piece.link), worn and U.ItemStats(worn) or {}
@@ -157,15 +174,15 @@ function ns.DrawGear()
 				projected[stat[2]] = projected[stat[2]] + (mine[stat[2]] or 0) - (theirs[stat[2]] or 0)
 			end
 		else
-			Fill(target, nil, U.Colorize(view.chosen and L.GEAR_NONE or "", unpack(Skin.COLORS.muted)))
+			Fill(target, nil, Skin.Colorize(view.chosen and L.GEAR_NONE or "", "muted"))
 		end
 	end
 	for index, stat in ipairs(STATS) do
 		local label = _G[stat[1]] or stat[1]
-		view.worn.stats[index]:SetText(label .. " : " .. now[stat[2]])
+		view.worn.stats[index]:SetText(L.GEAR_STAT:format(label, now[stat[2]]))
 		local change = projected[stat[2]] - now[stat[2]]
-		view.quests.stats[index]:SetText(label .. " : " .. projected[stat[2]]
-			.. (change > 0 and U.Colorize("  +" .. change, 0.56, 0.88, 0.64) or ""))
+		view.quests.stats[index]:SetText(L.GEAR_STAT:format(label, projected[stat[2]])
+			.. (change > 0 and Skin.Colorize("  +" .. change, "good") or ""))
 	end
 end
 
@@ -196,7 +213,12 @@ function ns.GearView(parent, width)
 	view.pick:SetPoint("TOPLEFT", view.quests, "TOPLEFT", 0, -40)
 	view.pick:SetWidth(half)
 	view.pick:SetJustifyH("LEFT")
-	view.pick:SetText(L.GEAR_PICK)
+	function view:Resize(newWidth)
+		local part = math.floor((newWidth - SIDE_GAP) / 2)
+		self.worn:Resize(part)
+		self.quests:Resize(part)
+		self.pick:SetWidth(part)
+	end
 	local rule = Skin.Rule(view, true, 0.2)
 	rule:SetPoint("TOPLEFT", view.worn, "TOPRIGHT", SIDE_GAP / 2, 0)
 	rule:SetPoint("BOTTOM", view, "BOTTOM")
@@ -204,7 +226,7 @@ function ns.GearView(parent, width)
 	for _, slot in ipairs(view.quests.slots) do
 		slot:SetScript("OnClick", function(self)
 			local quest = self.quest and ns.Quest(self.quest)
-			if quest and ns.ShowSheet then ns.ShowSheet(quest, ns.Window and ns.Window()) end
+			if quest then ns.ShowSheet(quest, ns.Window()) end
 		end)
 	end
 	view.note = Skin.Text(view, "GameTooltipTextSmall", "muted")

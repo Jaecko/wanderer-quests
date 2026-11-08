@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="WANDERERQUESTS_TOGGLE" header="WANDERERQUESTS">
+		WandererQuests_Toggle()
+	</Binding>
+</Bindings>
