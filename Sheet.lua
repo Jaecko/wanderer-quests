@@ -183,7 +183,7 @@ local function Row()
 		row.route = Action(row, "plus", L.ACTION_ROUTE, ToRoute)
 		row.go = Action(row, "chevron", L.ACTION_FOLLOW, Follow)
 		function row:Hover()
-			local over = self:IsMouseOver() or self.go:IsMouseOver() or self.route:IsMouseOver() or self.more:IsMouseOver()
+			local over = (U.Hovered and U.Hovered(self) or self:IsMouseOver()) or self.go:IsMouseOver() or self.route:IsMouseOver() or self.more:IsMouseOver()
 			local data = self.data
 			local active = over and data ~= nil and (data.who ~= nil or data.open ~= nil or data.menu ~= nil)
 			local placed = active and data.who ~= nil and data.who.x ~= nil
@@ -206,7 +206,7 @@ local function Row()
 		end)
 		row.more:HookScript("OnLeave", function() row:Hover() end)
 		W.Skin.ItemTooltip(row, function(self) return self.item end)
-		row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		row:RegisterForClicks("LeftButtonUp", "RightButtonUp") row.padRight = true
 		row:SetScript("OnClick", function(self, button)
 			local data = self.data
 			if not data then return end
@@ -674,6 +674,7 @@ end
 
 local function Create()
 	sheet = W.Skin.CreateWindow("WandererQuestsSheet", "MEDIUM", owner)
+	if W.Skin.PadWindow then W.Skin.PadWindow(sheet, { side = true }) end
 	sheet:SetWidth(WIDTH)
 	sheet:EnableMouse(true)
 	-- (never half off the screen, whatever the window does)

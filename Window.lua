@@ -1030,7 +1030,7 @@ function ns.Init()
 		addon = ADDON,
 		title = L.QUESTS,
 		news = L.NEWS_LINES,
-		defaults = { remind = false, foldStory = false, filter = "all", hideDone = true, mapGivers = true, mapLow = false,
+		defaults = { remind = false, foldStory = true, filter = "all", hideDone = true, mapGivers = false, mapLow = false,
 			-- The quests followed on the screen, in the game's list's place.
 			tracker = true, trackerGroup = true, trackerCompact = false, trackerRest = true, trackerCombat = true,
 			trackerHeight = 420, trackerScale = 1, trackerBackground = false },
