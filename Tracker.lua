@@ -247,6 +247,7 @@ local Refresh, Scroll
 -- game's map is the one in front from then on.
 local steered = 0 -- when Wanderer last set the game's focus (its own changes are not your choices)
 local focusState -- the quest in front's objectives as last seen
+local refocus = false -- back in the world (a reload, a loading screen): the quest in front given to the game again
 
 local function Steer(id)
 	local super = _G.C_SuperTrack
@@ -274,6 +275,12 @@ local function KeepFocus()
 	local state = StateOf(id)
 	local before = focusState
 	focusState = state
+	-- (the game may still name it after a reload without following it any more: given again, once)
+	if refocus then
+		refocus = false
+		Steer(0)
+		return Steer(id)
+	end
 	if Clean(Safe(super.GetSuperTrackedQuestID)) ~= id then return Steer(id) end
 	-- (the same quest given again: the game draws its arrow where its next objective is)
 	if before and before ~= state then
@@ -302,7 +309,7 @@ function ns.Feature(id)
 	local mine = Store()
 	if mine.featured == id then id = nil end
 	mine.featured = id
-	focusState = nil
+	focusState, refocus = nil, false
 	Steer(id)
 	Skin.Play("click")
 	Refresh()
@@ -1160,7 +1167,7 @@ function ns.InitTracker()
 		if event == "PLAYER_ENTERING_WORLD" then
 			-- (a moment later: the game's list in the place you gave it, read, then put away)
 			return C_Timer.After(1, function()
-				settled = true
+				settled, refocus = true, true
 				ReadGameSpot()
 				Place()
 				Refresh()
