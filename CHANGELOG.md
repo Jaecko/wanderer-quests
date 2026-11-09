@@ -1,4 +1,5 @@
-# Wanderer Quests 1.2.5
+# Wanderer Quests 1.2.8
 
-### Fixed
-- When you hand in the quest in front and take the next one of its chain, the new one goes in front in its place.
+### New
+- For Wanderer Maps' atlas: where the creatures your quests ask for stand, and who takes a finished quest back.
+- A quest chosen on the atlas goes in front of your list.

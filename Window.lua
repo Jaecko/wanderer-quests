@@ -1084,7 +1084,22 @@ function ns.Init()
 		end,
 	})
 	-- For the other addons (Wanderer Maps): a quest shown here, its sheet open.
-	_G.WandererQuests = { Reveal = function(id) ns.Reveal(id) end }
+	_G.WandererQuests = { Reveal = function(id) ns.Reveal(id) end,
+		-- (Wanderer Maps' atlas: the dungeon doors { name, map, x, y, raid } and the givers on a map { name, x, y, quests })
+		Front = function(id) ns.PutInFront(id) end,
+		Entrances = function() return ns.EntranceList() end,
+		-- (where the creatures your quests ask for stand, who takes a finished one back, on a map)
+		Objectives = function(map) return ns.ObjectivesOn(map) end,
+		Givers = function(map)
+			local out, settings = {}, W.Settings("quests")
+			ns.ReadYou()
+			for _, giver in ipairs(ns.GiversOn(map, settings and settings.mapLow)) do
+				local titles = {}
+				for _, quest in ipairs(giver.quests) do titles[#titles + 1] = ns.QuestName(quest) end
+				out[#out + 1] = { name = giver.who.name or "?", x = giver.x, y = giver.y, count = #giver.quests, titles = titles, quest = giver.quests[1].id }
+			end
+			return out
+		end }
 	-- Wanderer's reader, when it has one: a library book says who takes it, or that it was handed in.
 	-- (the reading window gives what it knows of the text: its title, the item when read from the bags)
 	if W.ReaderNote then W.ReaderNote(function(info) return ns.BookNote(info.title, info.item) end) end

@@ -2,7 +2,7 @@
 
 Wanderer Quests is free software under the GNU General Public License, version 3 or later (see LICENSE).
 
-Its quest data (QuestData.lua and Names_*.lua) is generated from:
+Its quest data (QuestData.lua, SpawnData.lua and Names_*.lua) is generated from:
 
 - The CMaNGOS classic database, https://github.com/cmangos/classic-db (GNU GPL v3): the quests, their dungeon,
   the quests before and after them, their levels, races and classes.

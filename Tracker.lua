@@ -317,6 +317,14 @@ function ns.Feature(id)
 	Refresh()
 end
 
+-- In front, whatever was there (a quest chosen on Wanderer Maps' atlas); followed first if it was not.
+function ns.PutInFront(id)
+	local log = Log()
+	if not (id and log) then return end
+	if not Watched(id) and log.AddQuestWatch then Safe(log.AddQuestWatch, id) end
+	if Store().featured ~= id then ns.Feature(id) end
+end
+
 -- The quest in front handed in, its sequel taken: the sequel in front. A sequel is what the quest data says
 -- comes next; when the data names none, a quest taken just after that the game follows.
 local INHERIT_WAIT = 60 -- seconds after handing in, for a quest the data does not know

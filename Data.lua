@@ -222,6 +222,104 @@ function ns.Asks(quest)
 	return list
 end
 
+-- Where to go on a map ------------------------------------------------------------------------------------
+-- For Wanderer Maps' atlas: where the creatures and objects your quests still ask for stand (SpawnData.lua, by
+-- packs), and who takes back a quest that is done.
+
+local MOST_MARKS = 180 -- on one map
+local SPAWN_CELL = 2 -- percent of the map: one mark per quest and per cell
+local REDRAWN_SPAWNS = { -- the old map's bounds of the maps Forever redrew: { continent, min x, min y, max x, max y }
+	[1519] = { 0, -9175.2, 36.7, -8278.9, 1381 }, [215] = { 1, -3697.9, -3089.6, -272.9, 2048 },
+	[139] = { 0, 1218.8, -6056.3, 3800, -2185.4 }, [44] = { 0, -10022.9, -3741.7, -8575, -1570.8 },
+}
+
+local spawns
+local function Spawns()
+	if not spawns then
+		spawns = Read(ns.SPAWN_SOURCE) or { u = {}, o = {} }
+		ns.SPAWN_SOURCE = nil
+	end
+	return spawns
+end
+
+-- Its packs on this map, 0 to 100 (each(x, y)).
+local function EachSpawn(list, id, map, each)
+	local entry = list[id]
+	for index = 1, #(entry or EMPTY), 2 do
+		local zone, points = entry[index], entry[index + 1]
+		if ns.MapOf(zone) == map then
+			local old = REDRAWN_SPAWNS[zone]
+			for at = 1, #points, 2 do
+				local x, y = points[at], points[at + 1]
+				if old then
+					local wy, wx = old[5] - (x / 100) * (old[5] - old[3]), old[4] - (y / 100) * (old[4] - old[2])
+					x, y = OnZoneMap(old[1], wx, wy, map)
+				end
+				if x then each(x, y) end
+			end
+		end
+	end
+end
+
+-- An objective of the game is done: by what it asks for, when its words name it.
+local function DoneAsk(ask, objectives)
+	for _, objective in ipairs(objectives) do
+		local text = Clean(objective.text)
+		if text and ask.name and text:find(ask.name, 1, true) then return Clean(objective.finished) and true or false, text end
+	end
+	return false, nil
+end
+
+-- What your quests ask on a map: { { kind = "kill" | "loot" | "use" | "turnin", quest, title, name, x, y (0 to 1), words } },
+-- and the list of those quests: nothing on a continent (too many to read).
+function ns.ObjectivesOn(map)
+	local marks, log = {}, C_QuestLog
+	if not (ns.HasData() and map and log and log.GetNumQuestLogEntries and log.GetInfo) then return marks end
+	local count = Clean(Safe(log.GetNumQuestLogEntries)) or 0
+	local drops = Drops()
+	local data = Spawns()
+	for index = 1, count do
+		local info = Safe(log.GetInfo, index)
+		local id = type(info) == "table" and not Clean(info.isHeader) and Clean(info.questID)
+		local quest = id and ns.Quest(id)
+		if quest and quest.row and #marks < MOST_MARKS then
+			local title = Clean(info.title) or ns.QuestName(quest)
+			if Clean(Safe(log.IsComplete, id)) then
+				local who = ns.Ender(quest)
+				if who and who.zone and ns.MapOf(who.zone) == map and who.x then
+					marks[#marks + 1] = { kind = "turnin", quest = id, title = title, name = who.name, x = who.x / 100, y = who.y / 100 }
+				end
+			else
+				local objectives = Safe(log.GetQuestObjectives, id)
+				objectives = type(objectives) == "table" and objectives or EMPTY
+				local cells = {}
+				local function Mark(kind, name, words, x, y)
+					local cell = math.floor(x / SPAWN_CELL) .. ":" .. math.floor(y / SPAWN_CELL)
+					if cells[cell] or #marks >= MOST_MARKS then return end
+					cells[cell] = true
+					marks[#marks + 1] = { kind = kind, quest = id, title = title, name = name, words = words, x = x / 100, y = y / 100 }
+				end
+				for _, ask in ipairs(ns.Asks(quest)) do
+					local finished, words = DoneAsk(ask, objectives)
+					if not finished then
+						if ask.kind == "Npc" then
+							EachSpawn(data.u, ask.id, map, function(x, y) Mark("kill", ask.name, words, x, y) end)
+						elseif ask.kind == "Object" then
+							EachSpawn(data.o, ask.id, map, function(x, y) Mark("use", ask.name, words, x, y) end)
+						else
+							for _, unit in ipairs(drops[ask.id] or EMPTY) do
+								local name = Names("units")[unit]
+								EachSpawn(data.u, unit, map, function(x, y) Mark("loot", name, words or ask.name, x, y) end)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return marks
+end
+
 -- The rewards as the game gives them -------------------------------------------------------------------
 -- Forever changed some quests' rewards: what the game shows wins over the old base. Kept for the whole
 -- account (WandererQuestsDB.rewards: quest -> { rc, rg, m }, as in the data), only for the quests seen.
@@ -801,6 +899,16 @@ end
 function ns.Zones()
 	zones = zones or Places(ns.ZONES)
 	return zones
+end
+
+-- Every door known, for the map of another addon.
+function ns.EntranceList()
+	local list = {}
+	for _, dungeon in ipairs(ns.Dungeons()) do
+		local door = ns.Entrance(dungeon)
+		if door then list[#list + 1] = { name = dungeon.name, map = door.map or door[1], x = door.x or door[2], y = door.y or door[3], raid = dungeon.raid } end
+	end
+	return list
 end
 
 -- Where each door stands in the world when the game's journal does not say: dungeon area -> { continent,
