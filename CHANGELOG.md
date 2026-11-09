@@ -1,4 +1,4 @@
-# Wanderer Quests 1.2.4
+# Wanderer Quests 1.2.5
 
 ### Fixed
-- The quest in front is given back to the game after a reload or a loading screen, so the game follows it again.
+- When you hand in the quest in front and take the next one of its chain, the new one goes in front in its place.

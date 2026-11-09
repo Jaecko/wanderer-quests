@@ -188,7 +188,9 @@ local function KeepOrder(quests)
 	for id, at in pairs(mine.new) do
 		if now - at > NEW_TIME or not placed[id] then mine.new[id] = nil end
 	end
-	if mine.featured and not (placed[mine.featured] and Watched(mine.featured)) then mine.featured = nil end
+	if mine.featured and not (placed[mine.featured] and Watched(mine.featured)) then
+		ns.frontGone, mine.featured = mine.featured, nil
+	end
 	local position = {}
 	for index, id in ipairs(mine.order) do position[id] = index end
 	return position
@@ -312,6 +314,47 @@ function ns.Feature(id)
 	focusState, refocus = nil, false
 	Steer(id)
 	Skin.Play("click")
+	Refresh()
+end
+
+-- The quest in front handed in, its sequel taken: the sequel in front. A sequel is what the quest data says
+-- comes next; when the data names none, a quest taken just after that the game follows.
+local INHERIT_WAIT = 60 -- seconds after handing in, for a quest the data does not know
+local handedIn -- { id, time } the quest in front, just handed in
+
+-- (the list may already have let it go: the game says the quest is gone before it says it was handed in)
+local function NoteHandedIn(id)
+	if id and (id == Store().featured or id == ns.frontGone) then handedIn = { id = id, time = GetTime() } end
+end
+
+local function IsSequel(id, before)
+	local earlier = ns.Quest(before)
+	local following = earlier and ns.Next(earlier) or {}
+	for _, other in ipairs(following) do
+		if other.id == id then return true end
+	end
+	if following[1] then return false end -- (the data knows what comes next, and it is another)
+	local super = _G.C_SuperTrack
+	return handedIn and handedIn.id == before and GetTime() - handedIn.time <= INHERIT_WAIT
+		and super and super.GetSuperTrackedQuestID and Clean(Safe(super.GetSuperTrackedQuestID)) == id or false
+end
+
+local INHERIT_TRIES = 4
+local function Inherit(id, tries)
+	local mine = Store()
+	local before = handedIn and handedIn.id
+	-- (another quest put in front since: yours stays)
+	if not (id and before) or id == before or (mine.featured and mine.featured ~= before) then return end
+	if not IsSequel(id, before) then return end
+	-- (the game adds it to its list a moment after)
+	if not Watched(id) then
+		tries = tries or INHERIT_TRIES
+		if tries > 0 then C_Timer.After(0.5, function() Inherit(id, tries - 1) end) end
+		return
+	end
+	mine.featured, handedIn = id, nil
+	focusState, refocus = nil, false
+	Steer(id)
 	Refresh()
 end
 
@@ -1174,6 +1217,9 @@ function ns.InitTracker()
 			end)
 		end
 		if event == "PLAYER_REGEN_ENABLED" and not dirty then return end
+		if event == "QUEST_TURNED_IN" then NoteHandedIn(unit) end
+		-- (a moment later: the game has put it in its list and followed it)
+		if event == "QUEST_ACCEPTED" and On() then C_Timer.After(0.3, function() Inherit(unit) end) end
 		Refresh()
 	end)
 	if W.OnCharacterForgotten then
