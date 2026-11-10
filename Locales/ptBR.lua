@@ -199,4 +199,5 @@ ns.LOCALES.ptBR = {
 		TRACKER_FOLD = "Clique: recolher esta zona",
 		TRACKER_UNFOLD = "Clique: abrir esta zona",
 		TRACKER_MORE = "Mais %d abaixo (roda)",
+		TRACKER_PAD_HINT = "Botão de baixo: escolher · botão da esquerda: mapa · botão da direita: voltar",
 }

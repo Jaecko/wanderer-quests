@@ -199,4 +199,5 @@ ns.LOCALES.zhCN = {
 		TRACKER_FOLD = "点击：折叠此区域",
 		TRACKER_UNFOLD = "点击：展开此区域",
 		TRACKER_MORE = "下方还有 %d 个（滚轮）",
+		TRACKER_PAD_HINT = "下方按钮：选择 · 左侧按钮：地图 · 右侧按钮：返回",
 }

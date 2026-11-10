@@ -199,4 +199,5 @@ ns.LOCALES.itIT = {
 		TRACKER_FOLD = "Clic: chiudi questa zona",
 		TRACKER_UNFOLD = "Clic: apri questa zona",
 		TRACKER_MORE = "Altre %d sotto (rotella)",
+		TRACKER_PAD_HINT = "Pulsante in basso: scegli · pulsante a sinistra: mappa · pulsante a destra: indietro",
 }

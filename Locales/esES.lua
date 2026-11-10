@@ -199,4 +199,5 @@ ns.LOCALES.esES = {
 		TRACKER_FOLD = "Clic: plegar esta zona",
 		TRACKER_UNFOLD = "Clic: desplegar esta zona",
 		TRACKER_MORE = "%d más abajo (rueda)",
+		TRACKER_PAD_HINT = "Botón inferior: elegir · botón izquierdo: mapa · botón derecho: volver",
 }

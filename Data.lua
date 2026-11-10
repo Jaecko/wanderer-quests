@@ -489,7 +489,6 @@ local function Learn(unit, list)
 	end
 	if unknown and ns.ForgetSeen then ns.ForgetSeen() end
 end
-ns.LearnOffers = Learn
 
 -- Heard once Wanderer Quests is set up (ns.Init), never at loading.
 function ns.InitGivers()

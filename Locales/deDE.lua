@@ -199,4 +199,5 @@ ns.LOCALES.deDE = {
 		TRACKER_FOLD = "Klick: diese Zone einklappen",
 		TRACKER_UNFOLD = "Klick: diese Zone ausklappen",
 		TRACKER_MORE = "%d weitere darunter (Mausrad)",
+		TRACKER_PAD_HINT = "Unterer Knopf: wählen · linker Knopf: Karte · rechter Knopf: zurück",
 }

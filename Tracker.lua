@@ -40,6 +40,7 @@ local rows = {} -- the rows drawn, in order
 local pool = {}
 local items = {} -- quest id -> its item button (made out of a fight)
 local itemPool = {}
+local itemsMade = 0
 local offset = 0 -- rows of the list scrolled away
 local dirty = false -- drawn again once the fight is over
 local dragging -- the quest id held by its handle
@@ -168,12 +169,16 @@ local function InLog(id)
 end
 
 -- The order kept: every quest followed in it (a new one at the bottom), those gone from the log let go.
+local logRead = false -- the game said its log is read (an empty log then means no quest, not "not read yet")
 local function KeepOrder(quests)
 	local mine = Store()
 	local placed = {}
+	-- (the log not read yet at login, empty: nothing kept is let go, what comes next is not "new")
+	local log = Log()
+	local ready = logRead or (log and log.GetNumQuestLogEntries and (Clean(Safe(log.GetNumQuestLogEntries)) or 0) > 0)
 	for index = #mine.order, 1, -1 do
 		local id = mine.order[index]
-		if placed[id] or not InLog(id) then table.remove(mine.order, index) else placed[id] = true end
+		if placed[id] or (ready and not InLog(id)) then table.remove(mine.order, index) else placed[id] = true end
 	end
 	for _, quest in ipairs(quests) do
 		if not placed[quest.id] then
@@ -183,12 +188,12 @@ local function KeepOrder(quests)
 			if mine.seeded and not mine.new[quest.id] then mine.new[quest.id] = time() end
 		end
 	end
-	mine.seeded = true
+	if ready then mine.seeded = true end
 	local now = time()
 	for id, at in pairs(mine.new) do
 		if now - at > NEW_TIME or not placed[id] then mine.new[id] = nil end
 	end
-	if mine.featured and not (placed[mine.featured] and Watched(mine.featured)) then
+	if ready and mine.featured and not (placed[mine.featured] and Watched(mine.featured)) then
 		ns.frontGone, mine.featured = mine.featured, nil
 	end
 	local position = {}
@@ -604,6 +609,8 @@ local function Row()
 	end)
 	row.handle:SetScript("OnMouseUp", function() ns.EndDrag() end)
 	row.handle.row = row
+	row.handle.padIgnored = true -- (dragged: a mouse's)
+	row.padRight = true
 	row:SetScript("OnEnter", function(self)
 		if self.kind == "quest" then
 			if not InCombatLockdown() and not self.featured then self.handle:SetAlpha(1) end
@@ -631,7 +638,8 @@ local function Free(row)
 end
 
 local function Release()
-	for _, row in ipairs(rows) do Free(row) end
+	-- (from the last: the next drawing takes the same rows in the same order, the controller's choice stays on its line)
+	for index = #rows, 1, -1 do Free(rows[index]) end
 	wipe(rows)
 end
 
@@ -640,6 +648,8 @@ local function Line(parent, kind, words, role, template)
 	local row = Row()
 	row:SetParent(parent)
 	row.kind = kind
+	-- (a controller goes from title to title, as on the game's list: what is written under a title is not stopped on)
+	row.padIgnored = (kind == "objective" or kind == "turnin") or nil
 	row.text:SetFontObject(Skin.FontFor(template or "GameFontNormal"))
 	local c = type(role) == "table" and role or Skin.COLORS[role or "text"] or Skin.COLORS.text
 	row.text:SetTextColor(c[1], c[2], c[3])
@@ -647,6 +657,7 @@ local function Line(parent, kind, words, role, template)
 	row.text:SetShadowOffset(1, -1)
 	row.text:SetText(words or "")
 	row.count:SetText("")
+	row.count:SetTextColor(Skin.COLORS.text[1], Skin.COLORS.text[2], Skin.COLORS.text[3])
 	row.count:SetShadowColor(0, 0, 0, 0.95)
 	row.count:SetShadowOffset(1, -1)
 	row.mark:Hide()
@@ -780,7 +791,10 @@ end
 local function ItemButton()
 	local button = table.remove(itemPool)
 	if button then return button end
-	button = CreateFrame("Button", nil, root, "SecureActionButtonTemplate")
+	-- (a name of its own: the controller's key clicks it by that name, the game only lets an item be used that way)
+	itemsMade = itemsMade + 1
+	button = CreateFrame("Button", "WandererQuestsTrackerItem" .. itemsMade, root, "SecureActionButtonTemplate")
+	button.padPrimary, button.padOutside = "LeftButton", true -- (it stands left of its row, outside the list)
 	button:SetSize(ITEM, ITEM)
 	button:RegisterForClicks("AnyUp", "AnyDown")
 	button.icon = button:CreateTexture(nil, "ARTWORK")
@@ -1078,17 +1092,20 @@ end
 
 -- The calm: faded at rest, the others faded in a fight (the quest in front stays), back under the mouse.
 local function Calm(elapsed)
-	if not root:IsShown() then return end
 	if dragging then
 		if not IsMouseButtonDown("LeftButton") then return ns.EndDrag() end
 		ShowInsert()
 	end
-	local over = U.IsMouseOver(root) or dragging ~= nil
+	-- (U.Hovered tests the mouse itself; an older Wanderer has only U.IsMouseOver)
+	local over = (U.Hovered or U.IsMouseOver)(root) or dragging ~= nil
 	local target = 1
 	if not over and Setting("trackerRest") ~= false then target = REST end
-	root:SetAlpha(tween:Step(target, elapsed, FADE_IN, FADE_OUT))
+	-- (written only when it changes: this runs on every frame the list is shown)
+	local alpha = tween:Step(target, elapsed, FADE_IN, FADE_OUT)
+	if root:GetAlpha() ~= alpha then root:SetAlpha(alpha) end
 	local fight = (InCombatLockdown() or Clean(Safe(UnitAffectingCombat, "player"))) and Setting("trackerCombat") ~= false and not over
-	listFrame:SetAlpha(fight and IN_FIGHT or 1)
+	local listAlpha = fight and IN_FIGHT or 1
+	if listFrame:GetAlpha() ~= listAlpha then listFrame:SetAlpha(listAlpha) end
 end
 
 -- The game's list ----------------------------------------------------------------------------------------------------
@@ -1179,6 +1196,28 @@ function ns.InitTracker()
 	root:SetMovable(true)
 	root:EnableMouse(false)
 	root:Hide()
+	-- The controller's wheel goes to the game's list of quests, put away here: it comes to this one instead, with the
+	-- game's own key for the map.
+	root.padHint = Skin.Text(root, "GameFontHighlight", "text")
+	root.padHint:SetPoint("BOTTOMLEFT", root, "TOPLEFT", 0, 4)
+	root.padHint:SetText(L.TRACKER_PAD_HINT)
+	root.padHint:Hide()
+	local function ControllerIn()
+		local map = _G.WorldMapFrame
+		if not (U.UsingPad and U.UsingPad()) or not root:IsShown() or (map and map:IsShown()) then return end
+		local atlas = _G.WandererMaps_Atlas and "WANDERERMAPS_ATLAS" or "TOGGLEWORLDMAP"
+		local taken = Skin.PadEnter(root, { actions = { PAD3 = atlas }, onLeave = function() root.padHint:Hide() end })
+		if taken then
+			-- (the controller's own icons when the game has them, else the words)
+			local keys = Skin.PadKeys and Skin.PadKeys({ { "PAD1", "CHOOSE" }, { "PAD3", "MAP" }, { "PAD2", "BACK" } })
+			root.padHint:SetText(keys or L.TRACKER_PAD_HINT)
+			root.padHint:Show()
+		end
+	end
+	local micro = _G.QuestLogMicroButton
+	if micro and micro.HookScript and Skin.PadEnter then micro:HookScript("OnClick", ControllerIn) end
+	-- (the game's own shortcut to its list: L1 + R1 + up)
+	if Skin.PadOnTrackerKey then Skin.PadOnTrackerKey(ControllerIn) end
 	ground = root:CreateTexture(nil, "BACKGROUND")
 	ground:SetColorTexture(0.04, 0.035, 0.03, 0.45)
 	ground:Hide()
@@ -1209,6 +1248,7 @@ function ns.InitTracker()
 		pcall(events.RegisterEvent, events, event)
 	end
 	events:SetScript("OnEvent", function(_, event, unit)
+		if event == "QUEST_LOG_UPDATE" and settled then logRead = true end
 		if event == "UNIT_QUEST_LOG_CHANGED" and unit ~= "player" then return end
 		if event == "SUPER_TRACKING_CHANGED" then return On() and FocusChosen() end
 		if event == "BAG_UPDATE_COOLDOWN" then

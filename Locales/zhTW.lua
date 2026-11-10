@@ -199,4 +199,5 @@ ns.LOCALES.zhTW = {
 		TRACKER_FOLD = "點擊：摺疊此區域",
 		TRACKER_UNFOLD = "點擊：展開此區域",
 		TRACKER_MORE = "下方還有 %d 個（滾輪）",
+		TRACKER_PAD_HINT = "下方按鈕：選擇 · 左側按鈕：地圖 · 右側按鈕：返回",
 }

@@ -199,4 +199,5 @@ ns.LOCALES.koKR = {
 		TRACKER_FOLD = "클릭: 이 지역 접기",
 		TRACKER_UNFOLD = "클릭: 이 지역 펼치기",
 		TRACKER_MORE = "아래에 %d개 더 (휠)",
+		TRACKER_PAD_HINT = "아래 버튼: 선택 · 왼쪽 버튼: 지도 · 오른쪽 버튼: 뒤로",
 }

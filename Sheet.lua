@@ -600,7 +600,8 @@ local function Draw()
 			row.text:SetText(Muted(L.STORY_LATER))
 			Finish(row)
 			row.story = row.story or W.Skin.SmallButton(row, L.STORY_READ, function()
-				unfolded[quest.id] = true
+				-- (the quest shown now: this button stays with its row, from one quest to the next)
+				if shown then unfolded[shown.id] = true end
 				Draw()
 			end)
 			row.story:ClearAllPoints()

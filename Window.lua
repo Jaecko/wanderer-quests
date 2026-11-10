@@ -33,7 +33,7 @@ local BAR_WIDTH = 40 -- a place's small bar, on the left
 local AVAILABLE_ICON = "Interface\\GossipFrame\\AvailableQuestIcon"
 local ACTIVE_ICON = "Interface\\GossipFrame\\ActiveQuestIcon"
 local DONE_ICON = "Interface\\RaidFrame\\ReadyCheck-Ready"
-ns.AVAILABLE_ICON, ns.ACTIVE_ICON = AVAILABLE_ICON, ACTIVE_ICON
+ns.AVAILABLE_ICON = AVAILABLE_ICON
 
 -- Where you stand with a quest, in a color.
 local C = Skin.COLORS
@@ -1087,6 +1087,11 @@ function ns.Init()
 	_G.WandererQuests = { Reveal = function(id) ns.Reveal(id) end,
 		-- (Wanderer Maps' atlas: the dungeon doors { name, map, x, y, raid } and the givers on a map { name, x, y, quests })
 		Front = function(id) ns.PutInFront(id) end,
+		-- (the map a quest of your log belongs on, when the game does not say)
+		QuestMap = function(id)
+			local quest = ns.HasData() and ns.Quest(id)
+			return quest and quest.zone and ns.MapOf(quest.zone) or nil
+		end,
 		Entrances = function() return ns.EntranceList() end,
 		-- (where the creatures your quests ask for stand, who takes a finished one back, on a map)
 		Objectives = function(map) return ns.ObjectivesOn(map) end,

@@ -202,6 +202,7 @@ local LOCALES = {
 		TRACKER_FOLD = "Click: fold this zone",
 		TRACKER_UNFOLD = "Click: unfold this zone",
 		TRACKER_MORE = "%d more below (wheel)",
+		TRACKER_PAD_HINT = "Bottom button: choose · left button: map · right button: back",
 	},
 }
 -- The client's language comes in its own file, loaded after this one (Locales/<code>.lua).

@@ -199,4 +199,5 @@ ns.LOCALES.frFR = {
 		TRACKER_FOLD = "Clic : replier cette zone",
 		TRACKER_UNFOLD = "Clic : déplier cette zone",
 		TRACKER_MORE = "%d de plus en dessous (molette)",
+		TRACKER_PAD_HINT = "Bouton du bas : choisir · bouton de gauche : carte · bouton de droite : retour",
 }
