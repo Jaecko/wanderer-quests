@@ -10,7 +10,7 @@ local W = Wanderer
 local U = W.Util
 local Skin = W.Skin
 
-local ROW = 36
+local ROW = rawget(Skin, "ROW") and Skin.ROW.normal or 34 -- (read raw: an older Wanderer has none)
 local SIDE_GAP = 30
 -- The slots as on the character sheet: two columns (the game's slot ids, Data.lua's groups).
 local COLUMNS = {
@@ -61,7 +61,7 @@ local function Slot(parent)
 	slot.under:SetWordWrap(false)
 	slot.mark = slot:CreateTexture(nil, "BACKGROUND")
 	slot.mark:SetAllPoints()
-	slot.mark:SetColorTexture(0.31, 0.78, 0.43, 0.1)
+	slot.mark:SetColorTexture(Skin.RGB("good", Skin.CHOSEN))
 	slot.mark:Hide()
 	Skin.ItemTooltip(slot, function(self) return self.link end, "ANCHOR_RIGHT")
 	return slot

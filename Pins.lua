@@ -70,7 +70,9 @@ function Pin:OnMouseEnter()
 		local r, g, b = W.QuestLevelColor(quest.questLevel or ns.YourLevel())
 		lines[#lines + 1] = { ("[%s] %s"):format(quest.questLevel or "?", ns.QuestName(quest)), r, g, b }
 	end
-	lines[#lines + 1] = ns.TipLine(ns.Maps() and L.MAP_PIN_TIP or L.MAP_PIN_TIP_PLAIN, "blue")
+	-- (a controller has no Shift or Ctrl: its own words)
+	local pad = U.UsingPad and U.UsingPad()
+	lines[#lines + 1] = ns.TipLine(pad and L.MAP_PIN_TIP_PAD or ns.Maps() and L.MAP_PIN_TIP or L.MAP_PIN_TIP_PLAIN, "blue")
 	ns.ShowTip(self, lines)
 end
 

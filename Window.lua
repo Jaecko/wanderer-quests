@@ -17,8 +17,9 @@ local Skin = W.Skin
 
 local WIDTH, HEIGHT = 900, 600 -- at first; then as you leave it
 local MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT = 720, 540, 1600, 1100
-local ROW = 24 -- the places
-local QUEST_ROW = 26 -- the quests
+local KIT_ROW = rawget(Skin, "ROW") -- (the kit's row heights; read raw: an older Wanderer has none)
+local ROW = KIT_ROW and KIT_ROW.compact or 24 -- the places
+local QUEST_ROW = KIT_ROW and KIT_ROW.compact or 24 -- the quests
 local LEFT_WIDTH = 290
 local GAP = 24
 local TOP = 70 -- the heading, above the lists
@@ -39,7 +40,7 @@ ns.AVAILABLE_ICON = AVAILABLE_ICON
 local C = Skin.COLORS
 local STATUS = {
 	done = C.good, passed = C.good, active = C.gold, available = C.text,
-	locked = C.muted, level = C.bad, closed = { 0.45, 0.45, 0.45 },
+	locked = C.muted, level = C.bad, closed = C.done,
 }
 ns.STATUS_COLORS = STATUS -- (the quest sheet's too)
 local FAINT = C.muted
@@ -762,7 +763,14 @@ local function Create()
 	local searchSoon = U.Debounce(0.3, function() SearchQuests(window.search:GetText()) end)
 	window.search = Skin.CreateInput(window, nil, 60, { hint = L.QUEST_SEARCH, onChange = function() searchSoon() end })
 	window.search:SetSize(200, 24)
-	window.search:SetPoint("TOPRIGHT", window, "TOPRIGHT", -(margin + 54), -(margin + 6))
+	window.search:SetPoint("TOPRIGHT", window, "TOPRIGHT", -(margin + 74), -(margin + 6))
+	-- (the help beside the cog, the search left of it; a controller reads its own keys)
+	local help = Skin.Help and Skin.Help(window, L.HELP_TIP, "HEADING")
+	if help then
+		help:HookScript("OnEnter", function(self)
+			if U.UsingPad and U.UsingPad() then Skin.ShowTip(self, L.HELP_TIP_PAD, "ANCHOR_BOTTOM") end
+		end)
+	end
 	-- Left: the places, their levels, how many to take, a small bar of what is done.
 	dungeonList = Skin.Table(window, {
 		width = LEFT_WIDTH, rows = MAX_ROWS, rowHeight = ROW, titles = false, icon = false, onClick = ChooseDungeon, onDraw = DrawPlaces,
@@ -1017,8 +1025,8 @@ end
 
 function ns.Init()
 	if not (W and W.RegisterExtension) then return end
-	-- (API 17: W.ChangeEverywhere; API 16: Util.ChatInsert; API 15: the kit's "⋯" and cards, its progress lines, the screen-fitted scale, Util.AfterFight)
-	if (W.API or 1) < 17 then return W.Print(L.NEEDS_WANDERER) end
+	-- (API 21: the tracker's title, objective and done roles; API 19: Util.MapOfArea, Skin.Beside; API 17: W.ChangeEverywhere; API 16: Util.ChatInsert; API 15: the kit's "⋯" and cards, its progress lines, the screen-fitted scale, Util.AfterFight)
+	if (W.API or 1) < 21 then return W.Print(L.NEEDS_WANDERER) end
 	-- (a weight, what you play, your talents changed: the gear judged again, at once when shown)
 	W.OnComparisonChanged(function()
 		ns.ForgetGear()
@@ -1066,10 +1074,14 @@ function ns.Init()
 			o.Under(o.Slider("QUESTS_TRACKER_SCALE", L.TRACKER_SCALE, "quests.trackerScale", function(value)
 				return ("%d %%"):format(math.floor(value * 100 + 0.5))
 			end, RedrawTracker), tracker, trackerOn)
-			o.Under(o.Button(L.TRACKER_PLACE, L.TRACKER_PLACE_BUTTON, L.TRACKER_PLACE_DESC, function()
-				o.CloseSettings()
-				if W.PlaceMode then W.PlaceMode() end
-			end), tracker, trackerOn)
+			-- (placing is a mouse's: not offered under the pad, whenever it is taken up)
+			if W.PlaceMode then
+				local place = o.Under(o.Button(L.TRACKER_PLACE, L.TRACKER_PLACE_BUTTON, L.TRACKER_PLACE_DESC, function()
+					o.CloseSettings()
+					if W.PlaceMode then W.PlaceMode() end
+				end), tracker, trackerOn)
+				if type(place) == "table" then place.hidden = function() return U.UsingPad and U.UsingPad() or false end end
+			end
 			o.Header(L.SECTION_WORLD_MAP)
 			-- (the givers on the world map: a display, on, left to Questie when it draws its own; the lower
 			-- quests a choice under it)
@@ -1083,20 +1095,40 @@ function ns.Init()
 			o.Checkbox("quests", "remind", L.REMIND, L.REMIND_DESC)
 		end,
 	})
+	-- (where the items asked come from: under their tooltips, a card on a click)
+	if ns.InitSources then ns.InitSources() end
 	-- For the other addons (Wanderer Maps): a quest shown here, its sheet open.
-	_G.WandererQuests = { Reveal = function(id) ns.Reveal(id) end,
+	-- (Wanderer off: each answers nothing, quietly: no sheet, no quest, empty lists)
+	local function Live() return Settings() ~= nil end
+	_G.WandererQuests = { Reveal = function(id) if Live() then ns.Reveal(id) end end,
 		-- (Wanderer Maps' atlas: the dungeon doors { name, map, x, y, raid } and the givers on a map { name, x, y, quests })
-		Front = function(id) ns.PutInFront(id) end,
+		Front = function(id) if Live() then ns.PutInFront(id) end end,
+		-- (the quest in front of the list, the one you pinned: nil when none)
+		InFront = function() return Live() and ns.InFront and ns.InFront() or nil end,
+		-- (a quest's sheet beside another addon's window, the atlas: false when this addon does not know the quest)
+		Sheet = function(id, beside)
+			local quest = Live() and id and ns.HasData() and ns.Quest(id)
+			if not (quest and beside) then return false end
+			ns.ShowSheet(quest, beside)
+			return true
+		end,
+		HideSheet = function(beside) if ns.SheetOwner() == beside then ns.HideSheet() end end,
+		-- (the quest on the sheet beside that window now: nil when closed or beside another)
+		SheetQuest = function(beside)
+			local quest = Live() and ns.SheetOwner() == beside and ns.SheetQuest()
+			return quest and quest.id or nil
+		end,
 		-- (the map a quest of your log belongs on, when the game does not say)
 		QuestMap = function(id)
-			local quest = ns.HasData() and ns.Quest(id)
+			local quest = Live() and ns.HasData() and ns.Quest(id)
 			return quest and quest.zone and ns.MapOf(quest.zone) or nil
 		end,
-		Entrances = function() return ns.EntranceList() end,
+		Entrances = function() return Live() and ns.EntranceList() or {} end,
 		-- (where the creatures your quests ask for stand, who takes a finished one back, on a map)
-		Objectives = function(map) return ns.ObjectivesOn(map) end,
+		Objectives = function(map) return Live() and ns.ObjectivesOn(map) or {} end,
 		Givers = function(map)
 			local out, settings = {}, W.Settings("quests")
+			if not settings then return out end
 			ns.ReadYou()
 			for _, giver in ipairs(ns.GiversOn(map, settings and settings.mapLow)) do
 				local titles = {}

@@ -22,7 +22,7 @@ local GAP = 4 -- from the window
 local ICON = 16
 local DROPPERS = 3 -- creatures named under an item; the others in its "..."
 local DOT, DOT_GAP, DOTS_MOST = 6, 4, 12
-local ACTIONS = 70 -- room kept at a line's right for its actions under the mouse
+local ACTIONS = 88 -- room kept at a line's right for its actions under the mouse
 
 local sheet, scroll, content, owner, bar
 local shown -- the quest shown
@@ -149,6 +149,14 @@ local function RowMenu(row, atCursor)
 	W.Skin.ActionCard(row.more, { title = data.title or "", rows = data.menu, atCursor = atCursor })
 end
 
+-- Wanderer Bestiary, when it is there and knows that creature (its public table).
+local function Bestiary(who)
+	local found = _G.WandererBestiary
+	if type(found) ~= "table" or not found.Show then return nil end
+	if who and not (who.kind == "Npc" and who.id and found.Known(who.id)) then return nil end
+	return found
+end
+
 -- A small action at a line's right, under the mouse: the kit's glyph button, its one sentence.
 local function Action(row, glyph, tip, run)
 	local button = W.Skin.GlyphButton(row, glyph, 11, tip, function()
@@ -177,13 +185,19 @@ local function Row()
 		row.hover = row:CreateTexture(nil, "BACKGROUND")
 		row.hover:SetPoint("TOPLEFT", row, "TOPLEFT", -4, 2)
 		row.hover:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 4, -2)
-		row.hover:SetColorTexture(1, 1, 1, 0.04)
+		row.hover:SetColorTexture(1, 1, 1, W.Skin.HOVER or 0.05)
 		row.hover:Hide()
 		row.more = W.Skin.RowMore(row, RowMenu)
-		row.route = Action(row, "plus", L.ACTION_ROUTE, ToRoute)
+		row.route = Action(row, "plus", function() return (U.UsingPad and U.UsingPad()) and L.ACTION_ROUTE_MENU or L.ACTION_ROUTE end, ToRoute)
 		row.go = Action(row, "chevron", L.ACTION_FOLLOW, Follow)
+		-- (a creature Wanderer Bestiary knows: its card beside the sheet)
+		row.beast = Action(row, "grid", L.ACTION_BESTIARY, function(who)
+			local bestiary = Bestiary(who)
+			if bestiary then bestiary.Show(who.id, sheet) end
+		end)
 		function row:Hover()
 			local over = (U.Hovered and U.Hovered(self) or self:IsMouseOver()) or self.go:IsMouseOver() or self.route:IsMouseOver() or self.more:IsMouseOver()
+				or self.beast:IsMouseOver()
 			local data = self.data
 			local active = over and data ~= nil and (data.who ~= nil or data.open ~= nil or data.menu ~= nil)
 			local placed = active and data.who ~= nil and data.who.x ~= nil
@@ -191,6 +205,7 @@ local function Row()
 			self.go:SetShown(placed and true or false)
 			self.route:SetShown(placed and ns.Maps() ~= nil or false)
 			self.more:SetShown(active and data.menu ~= nil and data.menu[1] ~= nil or false)
+			self.beast:SetShown(active and data.who ~= nil and Bestiary(data.who) ~= nil or false)
 		end
 		row:HookScript("OnEnter", function(self)
 			self:Hover()
@@ -206,7 +221,7 @@ local function Row()
 		end)
 		row.more:HookScript("OnLeave", function() row:Hover() end)
 		W.Skin.ItemTooltip(row, function(self) return self.item end)
-		row:RegisterForClicks("LeftButtonUp", "RightButtonUp") row.padRight = true
+		row:RegisterForClicks("LeftButtonUp", "RightButtonUp") row.padRightWord = "MORE"
 		row:SetScript("OnClick", function(self, button)
 			local data = self.data
 			if not data then return end
@@ -224,6 +239,8 @@ local function Row()
 				W.Skin.Play("click")
 				return ns.ShowSheet(data.open, owner)
 			end
+			-- (an item asked: where it comes from, the way to the nearest)
+			if data.sourcesOf and ns.SourceCard(data.sourcesOf, self) then return end
 			if who then
 				W.Skin.Play("click")
 				Follow(who, data.info)
@@ -234,7 +251,7 @@ local function Row()
 	row:ClearAllPoints()
 	row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
 	row:SetPoint("RIGHT", content, "RIGHT", 0, 0)
-	row.item, row.data = nil, nil
+	row.item, row.data, row.questsSources = nil, nil, nil
 	row.icon:Hide()
 	row.text:SetFontObject(W.Skin.FontFor("GameTooltipText"))
 	row.text:SetTextColor(C.text[1], C.text[2], C.text[3])
@@ -251,12 +268,17 @@ local function Finish(row, indent)
 	row.text:ClearAllPoints()
 	row.text:SetPoint("TOPLEFT", row, "TOPLEFT", left, -2)
 	row.text:SetWidth(width - left - (row.data and ACTIONS or 0))
+	-- (the controller's top button only on a line whose "..." holds something)
+	local data = row.data
+	row.padRight = data and data.menu and data.menu[1] and true or nil
 	row.more:ClearAllPoints()
 	row.more:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, 0)
 	row.route:ClearAllPoints()
 	row.route:SetPoint("RIGHT", row.more, "LEFT", -2, 0)
 	row.go:ClearAllPoints()
 	row.go:SetPoint("RIGHT", row.route, "LEFT", -2, 0)
+	row.beast:ClearAllPoints()
+	row.beast:SetPoint("RIGHT", row.go, "LEFT", -2, 0)
 	local height = math.max(ICON + 2, U.Measure(row.text, "GetStringHeight", 14) + 4)
 	row:SetHeight(height)
 	y = y + height + 6
@@ -267,16 +289,28 @@ local function PlaceTip(title, who)
 	local tip = { title }
 	local where = who and Where(who)
 	if where then tip[#tip + 1] = where end
-	if who and who.x then tip[#tip + 1] = ns.Maps() and L.ROW_TIP or L.ROW_TIP_PLAIN end
+	if who and who.x then
+		-- (a controller has no Shift or Ctrl: its own words)
+		if U.UsingPad and U.UsingPad() then
+			tip[#tip + 1] = ns.Maps() and L.ROW_TIP_PAD or L.ROW_TIP_PLAIN_PAD
+		else
+			tip[#tip + 1] = ns.Maps() and L.ROW_TIP or L.ROW_TIP_PLAIN
+		end
+	end
 	return tip
 end
 
--- A place line's menu: what it adds (reminders, the shopping list), a map link in the chat (with Wanderer Maps).
-local function PlaceMenu(who, extra)
+-- A place line's menu: what it adds (reminders, the shopping list), with Wanderer Maps the route and a map link in
+-- the chat.
+local function PlaceMenu(who, extra, info)
 	local menu = {}
 	for _, entry in ipairs(extra or {}) do menu[#menu + 1] = entry end
 	local maps = ns.Maps()
-	if who and who.x and maps and maps.ChatLink then
+	if who and who.x and maps then
+		menu[#menu + 1] = { text = L.ACTION_ROUTE_MENU, glyph = "plus", onClick = function() ToRoute(who, info) end }
+	end
+	-- (a link in the chat: the mouse's, the pad writes no line)
+	if who and who.x and maps and maps.ChatLink and not (U.UsingPad and U.UsingPad()) then
 		menu[#menu + 1] = { text = L.ACTION_LINK, glyph = "chevron", onClick = function() LinkInChat(who) end }
 	end
 	return menu
@@ -294,7 +328,7 @@ local function Someone(label, who, info)
 	local where = Where(who)
 	local words = label:format(who.name or "?")
 	row.text:SetText(words .. (where and ("\n" .. Muted(where)) or ""))
-	if who.x then row.data = { who = who, info = info, title = who.name, tip = PlaceTip(words, who), menu = PlaceMenu(who) } end
+	if who.x then row.data = { who = who, info = info, title = who.name, tip = PlaceTip(words, who), menu = PlaceMenu(who, nil, info) } end
 	Finish(row)
 end
 
@@ -459,7 +493,8 @@ local function ItemAsk(quest, ask, menu)
 				onClick = function() Follow(who, Why(quest, "objective")) end }
 		end
 	end
-	row.data = { title = ask.name, menu = menu }
+	row.data = { title = ask.name, menu = menu, sourcesOf = ask.id }
+	row.questsSources = true
 	Finish(row)
 	for index = 1, math.min(DROPPERS, #droppers) do
 		local who = droppers[index]
@@ -470,10 +505,28 @@ local function ItemAsk(quest, ask, menu)
 		local words = (index == 1 and L.DROPPED_BY or L.DROPPED_ALSO):format(who.name)
 		line.text:SetText(words .. (where and ("  " .. Muted(where)) or ""))
 		if who.x then
-			line.data = { who = who, info = Why(quest, "objective"), title = who.name, tip = PlaceTip(who.name, who), menu = PlaceMenu(who) }
+			line.data = { who = who, info = Why(quest, "objective"), title = who.name, tip = PlaceTip(who.name, who), menu = PlaceMenu(who, nil, Why(quest, "objective")) }
 		end
 		Finish(line, ICON + 6)
 		y = y - 4
+	end
+	-- The merchants that sell it, the objects that hold it: the nearest two of each, followed by a click.
+	local others = {}
+	for _, pair in ipairs({ { L.SOLD_BY, ns.SoldSources(ask.id) }, { L.HELD_IN, ns.HeldSources(ask.id) } }) do
+		for index = 1, math.min(2, #pair[2]) do
+			local who = pair[2][index]
+			local line = Row()
+			line.text:SetFontObject(W.Skin.FontFor("GameTooltipTextSmall"))
+			line.text:SetTextColor(C.soft[1], C.soft[2], C.soft[3])
+			local where = Where(who)
+			line.text:SetText(pair[1]:format(who.name) .. (where and ("  " .. Muted(where)) or ""))
+			if who.x then
+				line.data = { who = who, info = Why(quest, "objective"), title = who.name, tip = PlaceTip(who.name, who), menu = PlaceMenu(who, nil, Why(quest, "objective")) }
+			end
+			Finish(line, ICON + 6)
+			y = y - 4
+			others[#others + 1] = who
+		end
 	end
 	if #droppers > DROPPERS then
 		local more = Text("GameTooltipTextSmall", C.muted)
@@ -483,7 +536,7 @@ local function ItemAsk(quest, ask, menu)
 		more:SetText(L.DROPPED_MORE:format(#droppers - DROPPERS))
 		y = y + U.Measure(more, "GetStringHeight", 14) + 2
 	end
-	if droppers[1] then y = y + 6 end
+	if droppers[1] or others[1] then y = y + 6 end
 end
 
 -- What it asks: items (how many you carry, who drops them), creatures or objects (where).
@@ -500,7 +553,7 @@ local function Asks(quest, asks)
 			local words = L.COUNT:format(ask.name or "?", ask.count)
 			row.text:SetText(words .. (where and ("\n" .. Muted(where)) or ""))
 			local who = ask.x and ask or nil
-			row.data = { who = who, info = Why(quest, "objective"), title = ask.name, tip = PlaceTip(words, ask), menu = PlaceMenu(who, menu) }
+			row.data = { who = who, info = Why(quest, "objective"), title = ask.name, tip = PlaceTip(words, ask), menu = PlaceMenu(who, menu, Why(quest, "objective")) }
 			Finish(row)
 		end
 	end
@@ -562,7 +615,7 @@ local function After(quest)
 		row.text:SetText(words)
 		local who = from and from.x and from or nil
 		row.data = { open = other, who = who, info = Why(other, "take"), title = ns.QuestName(other),
-			tip = { ns.QuestName(other), L.OPEN_SHEET_TIP }, menu = PlaceMenu(who) }
+			tip = { ns.QuestName(other), L.OPEN_SHEET_TIP }, menu = PlaceMenu(who, nil, Why(other, "take")) }
 		Finish(row)
 	end
 end
@@ -646,31 +699,8 @@ end
 -- place comes back next time), the sheet on its right.
 local function Place()
 	if not (sheet and owner) then return end
-	sheet:ClearAllPoints()
-	-- (on the screen's scale: the window's edges, the sheet's width, the screen's)
-	local scale = owner:GetEffectiveScale()
-	local left, right = (owner:GetLeft() or 0) * scale, (owner:GetRight() or 0) * scale
-	local screen = (UIParent:GetRight() or 0) * UIParent:GetEffectiveScale()
-	local need = (GAP + WIDTH) * scale
-	local onLeft = false
-	if right + need > screen then
-		if left - need >= 0 then
-			onLeft = true
-		elseif scale > 0 and owner:GetTop() then
-			-- (the window and the sheet side by side, against the screen's right edge)
-			local top = owner:GetTop()
-			owner:ClearAllPoints()
-			owner:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", math.max(0, screen - need - (right - left)) / scale, top)
-		end
-	end
-	sheet.onLeft = onLeft
-	if onLeft then
-		sheet:SetPoint("TOPRIGHT", owner, "TOPLEFT", -GAP, 0)
-		sheet:SetPoint("BOTTOMRIGHT", owner, "BOTTOMLEFT", -GAP, 0)
-	else
-		sheet:SetPoint("TOPLEFT", owner, "TOPRIGHT", GAP, 0)
-		sheet:SetPoint("BOTTOMLEFT", owner, "BOTTOMRIGHT", GAP, 0)
-	end
+	-- (Wanderer's own way: the same for every sheet of the family)
+	sheet.onLeft = W.Skin.Beside(sheet, owner, WIDTH, GAP)
 end
 
 local function Create()
@@ -759,6 +789,9 @@ local function Create()
 	end)
 	sheet:HookScript("OnHide", function(self)
 		self:UnregisterAllEvents()
+		-- (a creature's card beside it goes with it)
+		local bestiary = Bestiary()
+		if bestiary and bestiary.Hide then bestiary.Hide(self) end
 		-- (the givers on the world map: none faded any more)
 		ns.RefreshMapPins()
 	end)
@@ -771,6 +804,11 @@ function ns.ShowSheet(quest, window)
 	if not quest then return end
 	owner = window
 	if not sheet then Create() end
+	-- (one sheet for every window that asks: Quests' own, Wanderer Maps' atlas; it goes and comes with the one it is beside)
+	if owner and sheet:GetParent() ~= owner then
+		sheet:SetParent(owner)
+		sheet:SetFrameLevel(owner:GetFrameLevel() + 10)
+	end
 	if owner and not hooked[owner] then
 		hooked[owner] = true
 		owner:HookScript("OnDragStop", Place)
@@ -791,6 +829,11 @@ function ns.HideSheet()
 	shown = nil
 	if sheet then sheet:Hide() end
 end
+
+-- The window the sheet is beside now.
+function ns.SheetOwner() return owner end
+-- (its own frame, for a card placed beside it)
+function ns.SheetFrame() return sheet end
 
 function ns.SheetShown() return sheet and sheet:IsShown() and shown ~= nil or false end
 

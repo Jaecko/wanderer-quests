@@ -12,7 +12,7 @@ local U = W.Util
 local Skin = W.Skin
 local Safe, Clean = U.Safe, U.Clean
 
-local ROW = 26
+local ROW = rawget(Skin, "ROW") and Skin.ROW.compact or 24 -- (read raw: an older Wanderer has none)
 local MAX_ROWS = 40
 local ICON = "Interface\\Icons\\INV_Misc_Book_07"
 
@@ -238,6 +238,7 @@ function ns.LibraryView(parent, width)
 			if entry.state ~= "done" then GoTo(entry) end
 		end,
 		onDraw = ns.DrawLibrary,
+		padRight = true, padRightWord = "MORE", -- (its right click: the book's choices)
 		columns = { { key = "sure", width = 110 }, { key = "zone", width = 230 }, { key = "level", width = 40, justify = "RIGHT" },
 			{ key = "pad", width = Skin.ROW_MORE } },
 	})

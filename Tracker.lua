@@ -19,6 +19,8 @@ local L = ns.L
 local W = Wanderer
 local U = W and W.Util
 local Skin = W and W.Skin
+-- (the family's gold: its accents)
+local GOLD = Skin and Skin.COLORS.gold
 local Safe, Clean = U.Safe, U.Clean
 
 local WIDTH = 250
@@ -30,9 +32,9 @@ local REST = 0.7 -- the list at rest (calm)
 local IN_FIGHT = 0.25 -- the others during a fight
 local FADE_IN, FADE_OUT = 0.2, 0.6
 local FALLBACK = { "TOPRIGHT", "TOPRIGHT", -70, -250 }
-local TITLE_ROLE = { 0.88, 0.85, 0.77 }
-local OBJECTIVE_ROLE = { 0.66, 0.62, 0.55 }
-local DONE_ROLE = { 0.42, 0.4, 0.36 }
+local TITLE_ROLE = Skin.COLORS.title
+local OBJECTIVE_ROLE = Skin.COLORS.objective
+local DONE_ROLE = Skin.COLORS.done
 local COUNT_ROOM = 40 -- the count's room at the right of a row
 
 local root, heading, featuredFrame, listFrame, ground, insertLine
@@ -54,6 +56,21 @@ local function Settings() return W.Settings and W.Settings("quests") or nil end
 
 -- Another addon draws the quests followed (Questie's tracker, Kaliel's Tracker...): left to it.
 local function Other() return W.Yields and W.Yields("questTracker") or nil end
+
+-- Wanderer Maps there, its atlas on: a click on a title shows the quest there, the pin on hover puts it in front.
+-- (a Maps that says whether its atlas is on is asked; an older one is taken at its word)
+function ns.OnAtlas()
+	local maps = _G.WandererMaps
+	if not (type(maps) == "table" and maps.ShowQuest ~= nil) then return false end
+	if maps.AtlasOn then return maps.AtlasOn() and true or false end
+	return true
+end
+
+-- The quest you pinned in front of the list (nil: none, or the list is off).
+function ns.InFront()
+	if not ns.TrackerOn() then return nil end
+	return ns.TrackerStore().featured
+end
 
 function ns.TrackerOn()
 	local settings = Settings()
@@ -115,6 +132,19 @@ local function ObjectiveWords(text)
 	text = tostring(text or ""):gsub("\194\160", " "):gsub("^%s*%-%s*", "")
 	text = text:gsub("^%d+%s*/%s*%d+%s+", ""):gsub("%s*:?%s*%d+%s*/%s*%d+%s*$", "")
 	return text
+end
+
+-- The item an objective asks for (its name in the objective's words), from the quest's data: nil when it is not an
+-- item, or the data does not know the quest.
+local function AskedItemOf(quest, words)
+	local data = type(words) == "string" and ns.HasData() and ns.Quest(quest.id)
+	if not (data and data.row) then return nil end
+	local lower = words:lower()
+	for _, ask in ipairs(ns.Asks(data)) do
+		local name = ask.kind == "Item" and ask.name
+		if name and lower:find(name:lower(), 1, true) then return ask.id end
+	end
+	return nil
 end
 
 local function Objectives(id)
@@ -521,9 +551,16 @@ local function QuestMenu(owner, quest)
 		end
 		menu:CreateDivider()
 		if ns.Reveal then menu:CreateButton(L.TRACKER_SHEET, function() ns.Reveal(quest.id) end) end
+		-- (Wanderer Maps: the quest on its map in the atlas)
+		if ns.OnAtlas() then
+			menu:CreateButton(L.TRACKER_ATLAS, function() _G.WandererMaps.ShowQuest(quest.id, quest.title) end)
+		end
 		local who = quest.complete and Ender(quest.id)
 		if who then menu:CreateButton(L.TRACKER_GO:format(who.name or "?"), function() GoHandIn(who, quest) end) end
-		menu:CreateButton(L.TRACKER_LINK, function() U.ChatInsert(Clean(Safe(GetQuestLink, quest.id))) end)
+		-- (a link in the chat: the mouse's, the pad writes no line)
+		if not (U.UsingPad and U.UsingPad()) then
+			menu:CreateButton(L.TRACKER_LINK, function() U.ChatInsert(Clean(Safe(GetQuestLink, quest.id))) end)
+		end
 		local log = Log()
 		if IsInGroup and IsInGroup() and log and log.IsPushableQuest and Clean(Safe(log.IsPushableQuest, quest.id)) then
 			menu:CreateButton(L.TRACKER_SHARE, function() Share(quest) end)
@@ -550,7 +587,8 @@ local function HeadingMenu(owner)
 			Refresh()
 		end)
 		menu:CreateDivider()
-		if W.PlaceMode then menu:CreateButton(L.TRACKER_PLACE, function() W.PlaceMode() end) end
+		-- (placing is a mouse's: not offered under the pad)
+		if W.PlaceMode and not (U.UsingPad and U.UsingPad()) then menu:CreateButton(L.TRACKER_PLACE, function() W.PlaceMode() end) end
 		if W.OpenOptions then menu:CreateButton(L.TRACKER_SETTINGS, function() W.OpenOptions("ext:quests") end) end
 	end)
 end
@@ -558,7 +596,13 @@ end
 -- Drawing ------------------------------------------------------------------------------------------------------------
 
 local function Hint(lines)
-	lines[#lines + 1] = ns.TipLine(L.TRACKER_HINT_CLICK, "blue")
+	-- (a controller: its own buttons; no Shift and no handle to drag, the menu holds both)
+	if U.UsingPad and U.UsingPad() then
+		lines[#lines + 1] = ns.TipLine(ns.OnAtlas() and L.TRACKER_HINT_ATLAS_PAD or L.TRACKER_HINT_CLICK_PAD, "blue")
+		lines[#lines + 1] = ns.TipLine(L.TRACKER_HINT_RIGHT_PAD, "blue")
+		return
+	end
+	lines[#lines + 1] = ns.TipLine(ns.OnAtlas() and L.TRACKER_HINT_ATLAS or L.TRACKER_HINT_CLICK, "blue")
 	lines[#lines + 1] = ns.TipLine(L.TRACKER_HINT_SHIFT, "blue")
 	lines[#lines + 1] = ns.TipLine(L.TRACKER_HINT_RIGHT, "blue")
 	if not InCombatLockdown() then lines[#lines + 1] = ns.TipLine(L.TRACKER_HINT_DRAG, "blue") end
@@ -567,7 +611,7 @@ end
 local function QuestTip(row)
 	local quest = row.quest
 	if not quest then return end
-	local lines = { { quest.title, 1, 0.82, 0 } }
+	local lines = { { quest.title, GOLD[1], GOLD[2], GOLD[3] } }
 	if quest.header then lines[#lines + 1] = ns.TipLine(quest.level and L.TRACKER_LEVEL_IN:format(quest.level, quest.header) or quest.header, "soft") end
 	for _, objective in ipairs(quest.objectives) do
 		lines[#lines + 1] = ns.TipLine((objective.done and "+ " or "- ") .. objective.words .. (objective.count and ("  " .. objective.count) or ""),
@@ -609,24 +653,54 @@ local function Row()
 	end)
 	row.handle:SetScript("OnMouseUp", function() ns.EndDrag() end)
 	row.handle.row = row
+	-- The pin, shown on hover of a title while a click shows the quest on the atlas (Wanderer Maps): it puts the quest
+	-- in front, or takes it back.
+	row.atlas = CreateFrame("Button", nil, row)
+	row.atlas:SetSize(14, 14)
+	row.atlas:SetPoint("RIGHT", row, "RIGHT", -1, 0)
+	row.atlas:SetFrameLevel(row:GetFrameLevel() + 3)
+	row.atlas.icon = row.atlas:CreateTexture(nil, "ARTWORK")
+	row.atlas.icon:SetAllPoints()
+	Skin.GlyphOn(row.atlas.icon, "star")
+	row.atlas.padIgnored = true
+	row.atlas.row = row
+	row.atlas:Hide()
+	row.atlas:SetScript("OnClick", function(self)
+		local quest = self.row.quest
+		if quest then ns.Feature(quest.id) end
+	end)
+	row.atlas:SetScript("OnEnter", function(self)
+		ns.ShowTip(self, { self.row.featured and L.TRACKER_UNFEATURE or L.TRACKER_FEATURE }, "ANCHOR_LEFT")
+	end)
+	row.atlas:SetScript("OnLeave", function(self)
+		GameTooltip:Hide()
+		if not self.row:IsMouseOver() then self:Hide() end
+	end)
 	row.handle.padIgnored = true -- (dragged: a mouse's)
-	row.padRight = true
 	row:SetScript("OnEnter", function(self)
 		if self.kind == "quest" then
 			if not InCombatLockdown() and not self.featured then self.handle:SetAlpha(1) end
+			-- (the pin: gold on the quest in front)
+			local c = Skin.COLORS[self.featured and "gold" or "label"]
+			self.atlas.icon:SetVertexColor(c[1], c[2], c[3])
+			self.atlas:SetShown(ns.OnAtlas() and self.quest ~= nil)
 			QuestTip(self)
+		elseif self.item then
+			return -- (an item asked: the kit's item tooltip below, where it comes from under it)
 		elseif self.tip then
 			ns.ShowTip(self, self.tip, "ANCHOR_LEFT")
 		end
 	end)
 	row:SetScript("OnLeave", function(self)
 		if not (self.handle:IsMouseOver() or dragging) then self.handle:SetAlpha(0) end
+		if not self.atlas:IsMouseOver() then self.atlas:Hide() end
 		GameTooltip:Hide()
 	end)
 	row:SetScript("OnClick", function(self, button)
 		if self.onClick then return self.onClick(self, button) end
 	end)
 	row:SetScript("OnMouseWheel", function(_, delta) Scroll(delta) end)
+	Skin.ItemTooltip(row, function(self) return self.kind == "objective" and self.item or nil end, "ANCHOR_LEFT")
 	return row
 end
 
@@ -634,6 +708,7 @@ local function Free(row)
 	row:Hide()
 	row:ClearAllPoints()
 	row.quest, row.kind, row.onClick, row.tip, row.featured, row.objective, row.compact = nil, nil, nil, nil, nil, nil, nil
+	row.item, row.questsSources = nil, nil
 	pool[#pool + 1] = row
 end
 
@@ -648,8 +723,12 @@ local function Line(parent, kind, words, role, template)
 	local row = Row()
 	row:SetParent(parent)
 	row.kind = kind
-	-- (a controller goes from title to title, as on the game's list: what is written under a title is not stopped on)
-	row.padIgnored = (kind == "objective" or kind == "turnin") or nil
+	-- (a controller goes from title to title, as on the game's list: what is written under a title is not stopped on,
+	-- but for the line to hand it in and an item asked, where it comes from)
+	row.padIgnored = kind == "objective" or nil
+	row.padAlt, row.padAltWord = nil, nil
+	-- (the top button: a right click's menu, on a quest's lines and the heading; a zone's name and "n more" have none)
+	row.padRight = (kind == "quest" or kind == "turnin" or kind == "objective" or kind == "heading") or nil
 	row.text:SetFontObject(Skin.FontFor(template or "GameFontNormal"))
 	local c = type(role) == "table" and role or Skin.COLORS[role or "text"] or Skin.COLORS.text
 	row.text:SetTextColor(c[1], c[2], c[3])
@@ -728,6 +807,11 @@ end
 local function DrawQuest(parent, quest, y, featured, compact)
 	local title = Line(parent, "quest", TitleWords(quest), TitleColor(quest), featured and (_G.GameFontNormalMed3 and "GameFontNormalMed3" or "GameFontNormalLarge") or "GameFontNormal")
 	title.quest, title.featured = quest, featured
+	-- (with Wanderer Maps the click shows the quest on the atlas: pinning it in front is the pin on hover, or the
+	-- controller's left button)
+	if ns.OnAtlas() then
+		title.padAlt, title.padAltWord = function() ns.Feature(quest.id) end, "PIN"
+	end
 	title:SetPoint("TOPLEFT", parent, "TOPLEFT", featured and 10 or 0, -y)
 	title:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
 	if featured then Mark(title, "star", "gold", 12) end
@@ -735,6 +819,7 @@ local function DrawQuest(parent, quest, y, featured, compact)
 	title.onClick = function(self, button)
 		if button == "RightButton" then return QuestMenu(self, quest) end
 		if IsShiftKeyDown() then return ns.Unfollow(quest.id) end
+		if ns.OnAtlas() and _G.WandererMaps.ShowQuest(quest.id, quest.title) then return end
 		ns.Feature(quest.id)
 	end
 	local top = y
@@ -760,11 +845,25 @@ local function DrawQuest(parent, quest, y, featured, compact)
 		for index, objective in ipairs(quest.objectives) do
 			local line = Line(parent, "objective", objective.words, objective.done and DONE_ROLE or OBJECTIVE_ROLE, "GameFontHighlight")
 			line.quest, line.objective = quest, index
-			if objective.done then Mark(line, "check", "good", 9) else Mark(line, "dot", { 0.85, 0.75, 0.5 }, 6) end
+			if objective.done then Mark(line, "check", "good", 9) else Mark(line, "dot", "kicker", 6) end
 			line.count:SetText(objective.count or "")
-			local c = objective.done and DONE_ROLE or { 0.88, 0.84, 0.74 }
+			local c = objective.done and DONE_ROLE or Skin.COLORS.title
 			line.count:SetTextColor(c[1], c[2], c[3])
 			line.text:SetWordWrap(true)
+			-- (an item asked, still to gather: under the mouse where it comes from, a click the way to the nearest)
+			local item = not objective.done and AskedItemOf(quest, objective.words)
+			if item then
+				line.item, line.questsSources = item, true
+				line:EnableMouse(true)
+				-- (a controller stops on it: the bottom and the left buttons open where it comes from)
+				line.padIgnored = nil
+				-- (the left button too, but only with the atlas: without it, it is the game's map, PadEnter)
+				if ns.OnAtlas() then line.padAlt, line.padAltWord = function(self) ns.SourceCard(item, self) end, "SOURCES" end
+				line.onClick = function(self, button)
+					if button == "RightButton" then return QuestMenu(self, quest) end
+					ns.SourceCard(item, self)
+				end
+			end
 			line:SetPoint("TOPLEFT", parent, "TOPLEFT", (featured and 10 or 0) + INDENT, -y)
 			line:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
 			y = y + Height(line, 13, (featured and 10 or 0) + INDENT)
@@ -800,16 +899,10 @@ local function ItemButton()
 	button.icon = button:CreateTexture(nil, "ARTWORK")
 	button.icon:SetAllPoints()
 	button.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-	button.edges = Skin.Edges(button, 1, 0.82, 0, 0.35)
+	button.edges = Skin.Edges(button, GOLD[1], GOLD[2], GOLD[3], 0.35)
 	button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
 	button.cooldown:SetAllPoints()
-	button:SetScript("OnEnter", function(self)
-		if not self.link then return end
-		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-		GameTooltip:SetHyperlink(self.link)
-		GameTooltip:Show()
-	end)
-	button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	Skin.ItemTooltip(button, function(self) return self.link end)
 	return button
 end
 
@@ -925,7 +1018,9 @@ local function Draw()
 	head.rule:SetPoint("TOPRIGHT", head, "BOTTOMRIGHT", 0, -1)
 	head.rule:Show()
 	head.count:SetText(Skin.GlyphText("grid", "label", 11))
-	head.tip = { { L.QUESTS, 1, 0.82, 0 }, ns.TipLine(L.TRACKER_HEAD_CLICK, "blue"), ns.TipLine(L.TRACKER_HEAD_RIGHT, "blue") }
+	local pad = U.UsingPad and U.UsingPad()
+	head.tip = { { L.QUESTS, GOLD[1], GOLD[2], GOLD[3] }, ns.TipLine(pad and L.TRACKER_HEAD_CLICK_PAD or L.TRACKER_HEAD_CLICK, "blue"),
+		ns.TipLine(pad and L.TRACKER_HEAD_RIGHT_PAD or L.TRACKER_HEAD_RIGHT, "blue") }
 	head.onClick = function(self, button)
 		if button == "RightButton" then return HeadingMenu(self) end
 		mine.closed = not mine.closed or nil
@@ -998,7 +1093,9 @@ local function Draw()
 	end
 	if hidden > 0 then
 		-- (the line "n more" within the height chosen: the last entries drawn let go to make its room, the first kept)
-		local more = Line(listFrame, "more", L.TRACKER_MORE:format(hidden), "muted", "GameFontNormalSmall")
+		-- (no wheel under a controller: said without it)
+		local moreText = (U.UsingPad and U.UsingPad()) and L.TRACKER_MORE_PAD or L.TRACKER_MORE
+		local more = Line(listFrame, "more", moreText:format(hidden), "muted", "GameFontNormalSmall")
 		table.remove(rows)
 		local moreHeight = Height(more, 12, INDENT)
 		while #placed > 0 do
@@ -1013,7 +1110,7 @@ local function Draw()
 			table.remove(placed)
 		end
 		rows[#rows + 1] = more
-		more.text:SetText(L.TRACKER_MORE:format(hidden))
+		more.text:SetText(moreText:format(hidden))
 		more:SetPoint("TOPLEFT", listFrame, "TOPLEFT", INDENT, -ly)
 		more:SetPoint("RIGHT", listFrame, "RIGHT", 0, 0)
 		ly = ly + moreHeight
@@ -1205,12 +1302,17 @@ function ns.InitTracker()
 	local function ControllerIn()
 		local map = _G.WorldMapFrame
 		if not (U.UsingPad and U.UsingPad()) or not root:IsShown() or (map and map:IsShown()) then return end
-		local atlas = _G.WandererMaps_Atlas and "WANDERERMAPS_ATLAS" or "TOGGLEWORLDMAP"
-		local taken = Skin.PadEnter(root, { actions = { PAD3 = atlas }, onLeave = function() root.padHint:Hide() end })
+		-- (with Wanderer Maps, the bottom button shows the chosen quest on the atlas and the left one pins it; else the
+		-- left button is the game's map)
+		local onAtlas = ns.OnAtlas()
+		local taken = Skin.PadEnter(root, { actions = not onAtlas and { PAD3 = "TOGGLEWORLDMAP" } or nil,
+			onLeave = function() root.padHint:Hide() end })
 		if taken then
-			-- (the controller's own icons when the game has them, else the words)
-			local keys = Skin.PadKeys and Skin.PadKeys({ { "PAD1", "CHOOSE" }, { "PAD3", "MAP" }, { "PAD2", "BACK" } })
-			root.padHint:SetText(keys or L.TRACKER_PAD_HINT)
+			-- (the controller's own icons when the game has them, else the words; only the keys true of every row: the
+			-- chosen row's own are said by the hint under it)
+			local keys = Skin.PadKeys and Skin.PadKeys((onAtlas and { { "PAD2", "BACK" } } or { { "PAD3", "MAP" }, { "PAD2", "BACK" } }))
+			-- (on the atlas the fallback words would name the game's map: none then)
+			root.padHint:SetText(keys or (not onAtlas and L.TRACKER_PAD_HINT) or "")
 			root.padHint:Show()
 		end
 	end
@@ -1230,15 +1332,18 @@ function ns.InitTracker()
 	insertLine = Skin.Rule(root, false, 0.9)
 	insertLine:SetHeight(2)
 	insertLine:Hide()
-	W.Placeable({ key = "questsTracker", label = function() return L.TRACKER_PLACE_LABEL end, frame = root,
-		load = function() return Store().place end,
-		save = function(spot)
-			Store().place = spot
-			Place()
-		end,
-		enabled = function() return On() end,
-		scale = function() return tonumber(Setting("trackerScale")) or 1 end,
-		default = function() return ns.TrackerDefaultPlace() end })
+	-- (moved with Wanderer's placing mode, when it has one)
+	if W.Placeable then
+		W.Placeable({ key = "questsTracker", label = function() return L.TRACKER_PLACE_LABEL end, frame = root,
+			load = function() return Store().place end,
+			save = function(spot)
+				Store().place = spot
+				Place()
+			end,
+			enabled = function() return On() end,
+			scale = function() return tonumber(Setting("trackerScale")) or 1 end,
+			default = function() return ns.TrackerDefaultPlace() end })
+	end
 	local driver = CreateFrame("Frame", nil, root)
 	driver:SetScript("OnUpdate", function(_, elapsed) Calm(elapsed) end)
 	local events = CreateFrame("Frame")

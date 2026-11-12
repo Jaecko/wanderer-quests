@@ -293,23 +293,24 @@ function ns.ObjectivesOn(map)
 				local objectives = Safe(log.GetQuestObjectives, id)
 				objectives = type(objectives) == "table" and objectives or EMPTY
 				local cells = {}
-				local function Mark(kind, name, words, x, y)
+				local function Mark(kind, name, words, x, y, unit)
 					local cell = math.floor(x / SPAWN_CELL) .. ":" .. math.floor(y / SPAWN_CELL)
 					if cells[cell] or #marks >= MOST_MARKS then return end
 					cells[cell] = true
-					marks[#marks + 1] = { kind = kind, quest = id, title = title, name = name, words = words, x = x / 100, y = y / 100 }
+					marks[#marks + 1] = { kind = kind, quest = id, title = title, name = name, words = words, x = x / 100, y = y / 100,
+						unit = unit }
 				end
 				for _, ask in ipairs(ns.Asks(quest)) do
 					local finished, words = DoneAsk(ask, objectives)
 					if not finished then
 						if ask.kind == "Npc" then
-							EachSpawn(data.u, ask.id, map, function(x, y) Mark("kill", ask.name, words, x, y) end)
+							EachSpawn(data.u, ask.id, map, function(x, y) Mark("kill", ask.name, words, x, y, ask.id) end)
 						elseif ask.kind == "Object" then
 							EachSpawn(data.o, ask.id, map, function(x, y) Mark("use", ask.name, words, x, y) end)
 						else
 							for _, unit in ipairs(drops[ask.id] or EMPTY) do
 								local name = Names("units")[unit]
-								EachSpawn(data.u, unit, map, function(x, y) Mark("loot", name, words or ask.name, x, y) end)
+								EachSpawn(data.u, unit, map, function(x, y) Mark("loot", name, words or ask.name, x, y, unit) end)
 							end
 						end
 					end
@@ -450,6 +451,26 @@ end
 
 -- Offered to you by a giver, once at least.
 function ns.Offered(id) return id ~= nil and Offers()[id] ~= nil end
+
+-- The other way: a quest the data gives to an NPC that NPC did not offer you, although you could take it
+-- (Forever changed some, or keeps one closed). Kept with your level then (WandererQuestsDB.notOffered:
+-- character -> quest -> level): asked again once you have gone up a level, or as soon as it is offered.
+local notAll, notMine
+local function NotOffers()
+	WandererQuestsDB = type(WandererQuestsDB) == "table" and WandererQuestsDB or {}
+	local all = WandererQuestsDB.notOffered
+	if all == notAll and notMine and type(all) == "table" then return notMine end
+	all = type(all) == "table" and all or {}
+	WandererQuestsDB.notOffered = all
+	local key = W.CharacterKey and W.CharacterKey() or "?"
+	all[key] = type(all[key]) == "table" and all[key] or {}
+	notAll, notMine = all, all[key]
+	return notMine
+end
+function ns.NotOffered(id)
+	local level = id ~= nil and NotOffers()[id]
+	return type(level) == "number" and level >= (you.level or 1)
+end
 -- What was kept of a giver of Forever's own quest (nil for the others).
 function ns.OfferRecord(id)
 	local record = Offers()[id]
@@ -466,7 +487,7 @@ local function Tenth(value) return value and math.floor(value * 1000 + 0.5) / 10
 
 -- The quests a giver offers: { { id, title, level } }. Only an NPC or an object of the world (a player
 -- sharing a quest, an item starting one: no giver).
-local function Learn(unit, list)
+local function Learn(unit, list, whole)
 	local guid = Clean(Safe(UnitGUID, unit))
 	local kind = type(guid) == "string" and (guid:find("^Creature") or guid:find("^Vehicle")) and "Npc"
 		or type(guid) == "string" and guid:find("^GameObject") and "Object" or nil
@@ -486,8 +507,34 @@ local function Learn(unit, list)
 			end
 			quests[id], forYou[id], statuses[id] = nil, nil, nil
 		end
+		if id then NotOffers()[id] = nil end
 	end
-	if unknown and ns.ForgetSeen then ns.ForgetSeen() end
+	-- (the whole list of an NPC: what the data gives it and it did not offer, though open to you, is not offered)
+	local changed = unknown
+	if whole and kind == "Npc" and ns.QUESTS then
+		local offered = {}
+		for _, offer in ipairs(list) do
+			local id = tonumber(offer[1])
+			if id then offered[id] = true end
+		end
+		local closed = NotOffers()
+		for id, row in pairs(ns.QUESTS) do
+			if not offered[id] and closed[id] == nil and type(row.u) == "table" then
+				for _, giver in ipairs(row.u) do
+					if giver == npc then
+						local quest = ns.Quest(id)
+						if quest and ns.ForYou(quest) and ns.Status(quest) == "available" then
+							closed[id] = you.level or 1
+							quests[id], forYou[id], statuses[id] = nil, nil, nil
+							changed = true
+						end
+						break
+					end
+				end
+			end
+		end
+	end
+	if changed and ns.ForgetSeen then ns.ForgetSeen() end
 end
 
 -- Heard once Wanderer Quests is set up (ns.Init), never at loading.
@@ -503,12 +550,12 @@ function ns.InitGivers()
 			for _, offer in ipairs(type(offers) == "table" and offers or EMPTY) do
 				list[#list + 1] = { Clean(offer.questID), Clean(offer.title), Clean(offer.questLevel) }
 			end
-			Learn("npc", list)
+			Learn("npc", list, true)
 		elseif event == "QUEST_GREETING" then
 			for index = 1, Clean(Safe(GetNumAvailableQuests)) or 0 do
 				list[#list + 1] = { Clean(select(5, Safe(GetAvailableQuestInfo, index))), Clean(Safe(GetAvailableTitle, index)) }
 			end
-			Learn("npc", list)
+			Learn("npc", list, true)
 		else
 			Learn("questnpc", { { Clean(Safe(GetQuestID)), Clean(Safe(GetTitleText)) } })
 		end
@@ -718,6 +765,8 @@ local function Status(quest)
 	if Passed(quest.id, 0) then return "passed" end
 	-- (its giver offered it to you: open, whatever the data says comes before or what level it needs)
 	if ns.Offered(quest.id) then return "available" end
+	-- (its giver did not offer it to you at this level: not open yet)
+	if ns.NotOffered(quest.id) then return "locked" end
 	if not Open(quest) then return "locked" end
 	if (quest.requiredLevel or 0) > (you.level or 1) then return "level" end
 	return "available"
@@ -818,42 +867,8 @@ ns.AreaName = U.AreaName
 local Plain = U.PlainName
 ns.Plain = Plain
 
--- The game's maps of zones, by their names (in your language, as the areas' names are).
-local maps
-local mapOf = {} -- area -> its map (false: none), found once
-local function FindMap(area)
-	if not maps then
-		maps = {}
-		local zone = Enum and Enum.UIMapType and Enum.UIMapType.Zone or 3
-		local seen = {}
-		for _, root in ipairs({ 947, 1414, 1415 }) do
-			local children = C_Map and Safe(C_Map.GetMapChildrenInfo, root, nil, true)
-			for _, info in ipairs(type(children) == "table" and children or EMPTY) do
-				local name, id = Clean(info.name), Clean(info.mapID)
-				if name and id and not seen[id] and (Clean(info.mapType) or zone) <= zone then
-					seen[id] = true
-					maps[#maps + 1] = { Plain(name), id }
-				end
-			end
-		end
-	end
-	local name = ns.AreaName(area)
-	if not name then return nil end
-	name = Plain(name)
-	-- The same name; else one inside the other (the closest: the longest).
-	local best
-	for _, map in ipairs(maps) do
-		if map[1] == name then return map[2] end
-		if map[1] ~= "" and (name:find(map[1], 1, true) or map[1]:find(name, 1, true)) and (not best or #map[1] > #best[1]) then
-			best = map
-		end
-	end
-	return best and best[2] or nil
-end
-local function MapOfArea(area)
-	if mapOf[area] == nil then mapOf[area] = FindMap(area) or false end
-	return mapOf[area] or nil
-end
+-- An area's map: Wanderer's own search, made once for every addon.
+local function MapOfArea(area) return U.MapOfArea(area) end
 
 -- The way to a place of a map (x, y: 0 to 100): Wanderer Maps' arrow (a step that says why: info { kind, quest,
 -- label }; a route of several steps is asked about first), else the game's own pin. Said in the chat when it
@@ -867,10 +882,12 @@ function ns.GoOrSay(map, x, y, title, info)
 	return went
 end
 
--- Wanderer Maps, when it is there (its public table).
+-- Wanderer Maps, when it is there and on (its public table; an older one without IsOn counted on).
 function ns.Maps()
 	local found = _G.WandererMaps
-	return type(found) == "table" and found.Go and found or nil
+	if not (type(found) == "table" and found.Go) then return nil end
+	if found.IsOn and not found.IsOn() then return nil end
+	return found
 end
 
 -- The game's map of an area (nil when none is found).
@@ -1303,6 +1320,63 @@ end
 
 -- The creatures that drop an item a quest asks: { Someone, ... } (one by name), those with a place first, the
 -- nearest first when you stand on their continent, else by name.
+-- The merchants that sell what the quests ask, the objects of the world that hold it (item -> NPCs, objects), read
+-- the first time they are asked for.
+local soldFrom, heldFrom
+local function Sold()
+	if not soldFrom then
+		soldFrom = Read(ns.SOLD_SOURCE) or {}
+		ns.SOLD_SOURCE = nil
+	end
+	return soldFrom
+end
+local function Held()
+	if not heldFrom then
+		heldFrom = Read(ns.HELD_SOURCE) or {}
+		ns.HELD_SOURCE = nil
+	end
+	return heldFrom
+end
+
+-- Those of a list, one of each name (the nearest), the placed and nearest first.
+local function Nearest(ids, kind)
+	if type(ids) ~= "table" then return EMPTY end
+	local hx, hy, here = U.Here()
+	local byName, list = {}, {}
+	for _, id in ipairs(ids) do
+		local who = Someone(kind, id)
+		local wx, wy, instance = WorldOf(who)
+		who.far = math.huge
+		if wx and hx and instance == here then who.far = math.sqrt((wx - hx) ^ 2 + (wy - hy) ^ 2) end
+		who.placed = who.x ~= nil
+		local same = byName[who.name]
+		if not same or (who.placed and not same.placed) or who.far < same.far then byName[who.name] = who end
+	end
+	for _, who in pairs(byName) do list[#list + 1] = who end
+	table.sort(list, function(a, b)
+		if a.placed ~= b.placed then return a.placed end
+		if a.far ~= b.far then return a.far < b.far end
+		return a.name < b.name
+	end)
+	return list
+end
+
+function ns.SoldSources(item) return ns.HasData() and Nearest(Sold()[item], "Npc") or EMPTY end
+function ns.HeldSources(item) return ns.HasData() and Nearest(Held()[item], "Object") or EMPTY end
+
+-- Everywhere an item a quest asks comes from, the nearest first: { { how = "drop" | "sold" | "held", who }, ... }.
+function ns.ItemSources(item)
+	local out = {}
+	for _, pair in ipairs({ { "drop", ns.DropSources(item) }, { "sold", ns.SoldSources(item) }, { "held", ns.HeldSources(item) } }) do
+		for _, who in ipairs(pair[2]) do out[#out + 1] = { how = pair[1], who = who } end
+	end
+	table.sort(out, function(a, b)
+		if a.who.placed ~= b.who.placed then return a.who.placed end
+		return a.who.far < b.who.far
+	end)
+	return out
+end
+
 function ns.DropSources(item)
 	local units = ns.HasData() and Drops()[item]
 	if type(units) ~= "table" then return EMPTY end
