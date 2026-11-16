@@ -22,13 +22,7 @@ local Skin = W and W.Skin
 -- (the family's gold: its accents)
 local GOLD = Skin and Skin.COLORS.gold
 local Safe, Clean = U.Safe, U.Clean
--- (an item's modified click, the game's way: Shift links it, Ctrl tries it on; true when handled)
-local ItemClick = rawget(U, "ItemClick") or function(link)
-	if link and IsModifiedClick() and HandleModifiedItemClick then
-		HandleModifiedItemClick(link)
-		return true
-	end
-end
+local ItemClick = ns.ItemClick
 local function LinkOf(item) local _, link = U.ItemInfo(item) return link end
 
 local WIDTH = 250
@@ -264,6 +258,7 @@ function ns.TrackedQuests()
 					list[#list + 1] = { id = id, index = index, title = Clean(info.title) or ("#" .. id), level = Clean(info.level),
 						tag = ns.TagMark(id, Clean(info.suggestedGroup)), header = header, failed = failed,
 						complete = not failed and Clean(Safe(log.IsComplete, id)) and true or false, objectives = Objectives(id),
+						autoComplete = Clean(info.isAutoComplete) and true or false,
 						timeLeft = not failed and TimeLeft(id, index) or nil, readAt = GetTime(), dungeon = InDungeon(id) }
 				end
 			end
@@ -689,6 +684,11 @@ function ns.QuestActions(quest, where)
 		Add(Store().featured == quest.id and L.TRACKER_UNFEATURE or L.TRACKER_FEATURE, "star", function() ns.Feature(quest.id) end, true)
 	end
 	if where ~= "window" and ns.Reveal and known then Add(L.TRACKER_SHEET, "chevron", function() ns.Reveal(quest.id) end) end
+	-- (the game's own details of the quest, as its list's menu offers them, in its words)
+	local open = _G.QuestUtil and _G.QuestUtil.OpenQuestDetails or _G.QuestMapFrame_OpenToQuestDetails
+	if inLog and open and type(_G.OBJECTIVES_VIEW_IN_QUESTLOG) == "string" then
+		Add(_G.OBJECTIVES_VIEW_IN_QUESTLOG, "chevron", function() Safe(open, quest.id) end)
+	end
 	-- (Wanderer Maps: the quest on its map in the atlas)
 	if where ~= "atlas" and inLog and ns.OnAtlas() then
 		Add(L.TRACKER_ATLAS, "chevron", function() _G.WandererMaps.ShowQuest(quest.id, quest.title) end)
@@ -1040,15 +1040,21 @@ local function DrawQuest(parent, quest, y, featured, compact)
 		failed:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
 		y = y + Height(failed, 14, left)
 	elseif quest.complete and not InCombatLockdown() then
-		local who = Ender(quest.id)
-		local turnin = Line(parent, "turnin", who and L.TRACKER_TURN_IN_TO:format(who.name or "?") or L.TRACKER_TURN_IN, "good", "GameFontHighlight")
+		-- (a quest completed from afar, as the game's list does it: a click completes it, no one to go to)
+		local here = quest.autoComplete and _G.ShowQuestComplete and _G.QUEST_WATCH_CLICK_TO_COMPLETE
+		local who = not here and Ender(quest.id)
+		local turnin = Line(parent, "turnin", here or (who and L.TRACKER_TURN_IN_TO:format(who.name or "?")) or L.TRACKER_TURN_IN, "good", "GameFontHighlight")
 		turnin.quest = quest
 		Mark(turnin, "check", "good")
 		turnin:SetPoint("TOPLEFT", parent, "TOPLEFT", (featured and 10 or 0) + INDENT, -y)
 		turnin:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
-		turnin.tip = { ns.TipLine(who and L.TRACKER_GO:format(who.name or "?") or L.TRACKER_TURN_IN, "blue") }
+		turnin.tip = { ns.TipLine(here or (who and L.TRACKER_GO:format(who.name or "?")) or L.TRACKER_TURN_IN, "blue") }
 		turnin.onClick = function(self, button)
 			if button == "RightButton" then return QuestMenu(self, quest) end
+			if here then
+				if _G.RemoveAutoQuestPopUp then Safe(_G.RemoveAutoQuestPopUp, quest.id) end
+				return Safe(_G.ShowQuestComplete, quest.id)
+			end
 			if who then GoHandIn(who, quest) end
 		end
 		y = y + Height(turnin, 14, (featured and 10 or 0) + INDENT)
@@ -1177,7 +1183,9 @@ local function InPlace()
 				row.count:SetText(objective.count or "")
 				local c = objective.done and DONE_ROLE or OBJECTIVE_ROLE
 				row.text:SetTextColor(c[1], c[2], c[3])
-				if objective.done then Mark(row, "check", "good", 12) end
+				-- (some objectives can be undone: an item asked dropped or sold)
+				if objective.done then Mark(row, "check", "good", 12) else Mark(row, "dot", "kicker", 6) end
+				row.count:SetTextColor(c[1], c[2], c[3])
 			end
 		elseif quest and row.kind == "quest" and row.compact then
 			row.count:SetText(HowFar(quest))

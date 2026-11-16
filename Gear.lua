@@ -9,13 +9,7 @@ local L = ns.L
 local W = Wanderer
 local U = W.Util
 local Skin = W.Skin
--- (an item's modified click, the game's way: Shift links it, Ctrl tries it on; true when handled)
-local ItemClick = rawget(U, "ItemClick") or function(link)
-	if link and IsModifiedClick() and HandleModifiedItemClick then
-		HandleModifiedItemClick(link)
-		return true
-	end
-end
+local ItemClick = ns.ItemClick
 
 local ROW = rawget(Skin, "ROW") and Skin.ROW.normal or 34 -- (read raw: an older Wanderer has none)
 local SIDE_GAP = 30

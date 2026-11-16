@@ -16,13 +16,7 @@ local L = ns.L
 
 local W = Wanderer
 local U = W.Util
--- (an item's modified click, the game's way: Shift links it, Ctrl tries it on; true when handled)
-local ItemClick = rawget(U, "ItemClick") or function(link)
-	if link and IsModifiedClick() and HandleModifiedItemClick then
-		HandleModifiedItemClick(link)
-		return true
-	end
-end
+local ItemClick = ns.ItemClick
 
 local WIDTH = 420
 local GAP = 4 -- from the window

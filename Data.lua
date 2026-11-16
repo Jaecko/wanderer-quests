@@ -10,6 +10,15 @@ local W = Wanderer
 local U = W.Util
 local Safe, Clean = U.Safe, U.Clean
 
+-- An item's modified click, the game's way: Shift links it, Ctrl tries it on; true when handled (the sheet, the
+-- gear, the tracker share it).
+ns.ItemClick = rawget(U, "ItemClick") or function(link)
+	if link and IsModifiedClick() and HandleModifiedItemClick then
+		HandleModifiedItemClick(link)
+		return true
+	end
+end
+
 local MAX_DEPTH = 25 -- quests before quests, at most
 -- The category of each class's own quests (class id -> its quest sort), and the bands of levels they go by.
 local CLASS_SORT = { [1] = -81, [2] = -141, [3] = -261, [4] = -162, [5] = -262, [7] = -82, [8] = -161, [9] = -61, [11] = -263 }
