@@ -250,7 +250,7 @@ end
 -- packs), and who takes back a quest that is done.
 
 local MOST_MARKS = 180 -- on one map
-local SPAWN_CELL = 2 -- percent of the map: one mark per quest and per cell
+local SPAWN_CELL = 2 -- percent of the map: one mark per thing asked and per cell
 local REDRAWN_SPAWNS = { -- the old map's bounds of the maps Forever redrew: { continent, min x, min y, max x, max y }
 	[1519] = { 0, -9175.2, 36.7, -8278.9, 1381 }, [215] = { 1, -3697.9, -3089.6, -272.9, 2048 },
 	[139] = { 0, 1218.8, -6056.3, 3800, -2185.4 }, [44] = { 0, -10022.9, -3741.7, -8575, -1570.8 },
@@ -318,7 +318,8 @@ function ns.ObjectivesOn(map)
 				objectives = type(objectives) == "table" and objectives or EMPTY
 				local cells = {}
 				local function Mark(kind, name, words, x, y, unit)
-					local cell = math.floor(x / SPAWN_CELL) .. ":" .. math.floor(y / SPAWN_CELL)
+					-- (one mark per cell for each thing asked: two creatures side by side keep their own)
+					local cell = tostring(unit or name) .. "@" .. math.floor(x / SPAWN_CELL) .. ":" .. math.floor(y / SPAWN_CELL)
 					if cells[cell] or #marks >= MOST_MARKS then return end
 					cells[cell] = true
 					marks[#marks + 1] = { kind = kind, quest = id, title = title, name = name, words = words, x = x / 100, y = y / 100,
