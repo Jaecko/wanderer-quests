@@ -9,6 +9,13 @@ local L = ns.L
 local W = Wanderer
 local U = W.Util
 local Skin = W.Skin
+-- (an item's modified click, the game's way: Shift links it, Ctrl tries it on; true when handled)
+local ItemClick = rawget(U, "ItemClick") or function(link)
+	if link and IsModifiedClick() and HandleModifiedItemClick then
+		HandleModifiedItemClick(link)
+		return true
+	end
+end
 
 local ROW = rawget(Skin, "ROW") and Skin.ROW.normal or 34 -- (read raw: an older Wanderer has none)
 local SIDE_GAP = 30
@@ -64,6 +71,11 @@ local function Slot(parent)
 	slot.mark:SetColorTexture(Skin.RGB("good", Skin.CHOSEN))
 	slot.mark:Hide()
 	Skin.ItemTooltip(slot, function(self) return self.link end, "ANCHOR_RIGHT")
+	-- (a modified click first, the game's way; else what the sheet does with it)
+	slot:SetScript("OnClick", function(self)
+		if ItemClick(self.link) then return end
+		if self.onPick then self.onPick(self) end
+	end)
 	return slot
 end
 
@@ -224,10 +236,10 @@ function ns.GearView(parent, width)
 	rule:SetPoint("BOTTOM", view, "BOTTOM")
 	-- A click on a piece: its quest's sheet.
 	for _, slot in ipairs(view.quests.slots) do
-		slot:SetScript("OnClick", function(self)
+		slot.onPick = function(self)
 			local quest = self.quest and ns.Quest(self.quest)
 			if quest then ns.ShowSheet(quest, ns.Window()) end
-		end)
+		end
 	end
 	view.note = Skin.Text(view, "GameTooltipTextSmall", "muted")
 	view.note:SetPoint("BOTTOMRIGHT", view, "BOTTOMRIGHT", 0, 0)

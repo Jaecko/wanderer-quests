@@ -99,6 +99,28 @@ function ns.Quest(id)
 end
 
 -- A quest's name in your language: the game's when it knows it (kept once given), else the data's.
+-- A quest's link put in the chat's box, as Shift and a click does in the game's log (never sent: yours to send);
+-- the game's own link when it gives one, else one made the game's way. False when no box opens.
+function ns.LinkQuest(quest)
+	if type(quest) ~= "table" or not quest.id then return false end
+	local link = _G.GetQuestLink and Clean(Safe(_G.GetQuestLink, quest.id))
+	if not link and C_QuestLog and C_QuestLog.GetQuestLink then link = Clean(Safe(C_QuestLog.GetQuestLink, quest.id)) end
+	if type(link) ~= "string" or link == "" then
+		local known = ns.Quest(quest.id) or quest
+		local name = (known.name and ns.QuestName(known)) or quest.title or "?"
+		link = ("|cffffff00|Hquest:%d:%d|h[%s]|h|r"):format(quest.id, tonumber(known.questLevel or quest.level) or -1, name)
+	end
+	return U.ChatInsert(link)
+end
+
+-- The chat's box open now (Shift and a click then links, as in the game's own lists).
+function ns.Writing()
+	local util = _G.ChatFrameUtil
+	local get = _G.ChatEdit_GetActiveWindow or (util and util.GetActiveWindow)
+	local box = get and Safe(get)
+	return type(box) == "table" and box.IsShown and box:IsShown() and true or false
+end
+
 function ns.QuestName(quest)
 	if not quest.title and C_QuestLog then quest.title = Clean(Safe(C_QuestLog.GetTitleForQuestID, quest.id)) end
 	return quest.title or quest.name or ("#" .. quest.id)
@@ -111,9 +133,10 @@ local function Has(mask, flag) return (mask % (2 * flag)) >= flag end
 local you = {}
 -- Asked of the game once per drawing; forYou and your class's quests, once per character.
 local statuses, passed, done, inLog, forYou, chains, complete = {}, {}, {}, {}, {}, {}, {}
-local bands
+local bands, busy, pending, skills, standings
 function ns.ReadYou()
-	statuses, passed, done, inLog, chains, complete = {}, {}, {}, {}, {}, {}
+	statuses, passed, done, inLog, chains, complete, busy = {}, {}, {}, {}, {}, {}, nil
+	pending, skills, standings = nil, nil, {}
 	local _, _, race = Safe(UnitRace, "player")
 	local _, _, class = Safe(UnitClass, "player")
 	race, class = Clean(race), Clean(class)
@@ -247,8 +270,9 @@ local function EachSpawn(list, id, map, each)
 	local entry = list[id]
 	for index = 1, #(entry or EMPTY), 2 do
 		local zone, points = entry[index], entry[index + 1]
-		if ns.MapOf(zone) == map then
-			local old = REDRAWN_SPAWNS[zone]
+		-- (a zone written negative: already on the map Forever redrew)
+		if ns.MapOf(math.abs(zone)) == map then
+			local old = zone > 0 and REDRAWN_SPAWNS[zone]
 			for at = 1, #points, 2 do
 				local x, y = points[at], points[at + 1]
 				if old then
@@ -348,9 +372,56 @@ local function Keep(questID, choice, given, money)
 	return true
 end
 
--- The quest the game's window shows (offered, its progress, given back).
-function ns.LearnShown()
+-- The texts as the game gives them -----------------------------------------------------------------------
+-- The quests Forever added have their texts in English only in the data: the game gives them in your language.
+-- What it shows (a giver's offer, your log) is kept for the account, per language (WandererQuestsDB.texts:
+-- language -> quest -> { what to do, its story }), with the character's name, class and race put back as the
+-- data writes them ($N, $C, $R), so another character reads its own.
+
+local function GameTexts()
+	WandererQuestsDB = type(WandererQuestsDB) == "table" and WandererQuestsDB or {}
+	local all = type(WandererQuestsDB.texts) == "table" and WandererQuestsDB.texts or {}
+	WandererQuestsDB.texts = all
+	all[language] = type(all[language]) == "table" and all[language] or {}
+	return all[language]
+end
+
+local function AsWritten(text)
+	if type(text) ~= "string" or U.IsSecret(text) then return nil end
+	text = strtrim(text)
+	if text == "" then return nil end
+	-- (yours as the data writes them: the name, the class, the race of whoever reads it)
+	local function Put(word, code)
+		word = Clean(word)
+		if type(word) == "string" and #word > 1 then
+			text = text:gsub(word:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"), code)
+		end
+	end
+	Put(Safe(UnitName, "player"), "$N")
+	Put(Safe(UnitClass, "player"), "$C")
+	Put(Safe(UnitRace, "player"), "$R")
+	return (text:gsub("\n", "$B"):gsub("\r", ""))
+end
+
+local function KeepTexts(questID, objective, story)
+	objective, story = AsWritten(objective), AsWritten(story)
+	if not (questID and questID > 0) or not (objective or story) then return false end
+	local kept = GameTexts()
+	local was = type(kept[questID]) == "table" and kept[questID] or {}
+	kept[questID] = { objective or was[1], story or was[2] }
+	return true
+end
+ns.KeepTexts = KeepTexts -- (tests)
+
+local function TextsKnown(questID) return type(GameTexts()[questID]) == "table" end
+
+-- The quest the game's window shows (offered, its progress, given back). event: the one that showed it (only
+-- the offer holds the quest's own texts).
+function ns.LearnShown(event)
 	local id = Clean(Safe(GetQuestID))
+	if event == "QUEST_DETAIL" and id and not TextsKnown(id) then
+		KeepTexts(id, Clean(Safe(GetObjectiveText)), Clean(Safe(GetQuestText)))
+	end
 	local function Reader(kind)
 		return function(index)
 			local item = U.ItemID(Clean(Safe(GetQuestItemLink, kind, index)))
@@ -378,10 +449,13 @@ end
 -- once (its rewards never change): kept from the game already, or read this session, it is left alone (each
 -- change of the log's choice redraws the game's quest windows).
 local learned = {}
+local textsAsked = {} -- (asked once a session: a quest the game gives no text for is not chosen again)
 function ns.LearnLog(questID)
 	local log = C_QuestLog
 	if not (log and questID and log.SetSelectedQuest) then return false end
-	if learned[questID] or Seen()[questID] then return true end
+	local needRewards = not (learned[questID] or Seen()[questID])
+	local needTexts = not (textsAsked[questID] or TextsKnown(questID))
+	if not (needRewards or needTexts) then return true end
 	local index = Clean(Safe(log.GetLogIndexForQuestID, questID))
 	if not (index and index > 0) then return false end
 	local before = Clean(Safe(log.GetSelectedQuest))
@@ -396,7 +470,15 @@ function ns.LearnLog(questID)
 		return Clean(item), Clean(amount)
 	end)
 	local money = Clean(Safe(GetQuestLogRewardMoney, questID)) or 0
+	if needTexts then
+		textsAsked[questID] = true
+		if GetQuestLogQuestText then
+			local story, objective = Safe(GetQuestLogQuestText, index)
+			KeepTexts(questID, Clean(objective), Clean(story))
+		end
+	end
 	if before ~= questID then Safe(log.SetSelectedQuest, before or 0) end
+	if not needRewards then return true end
 	local kept = Keep(questID, choice, given, money)
 	if kept then learned[questID] = true end
 	return kept
@@ -422,9 +504,9 @@ function ns.InitLearn()
 	learner:SetScript("OnEvent", function(_, event, ...)
 		if event == "QUEST_ACCEPTED" then
 			ns.LearnLog(Clean(select(select("#", ...), ...)))
-		elseif not ns.LearnShown() then
+		elseif not ns.LearnShown(event) then
 			-- (an item the game was still fetching: read again a moment after)
-			C_Timer.After(0.5, ns.LearnShown)
+			C_Timer.After(0.5, function() ns.LearnShown(event) end)
 		end
 	end)
 end
@@ -512,6 +594,9 @@ local function Learn(unit, list, whole)
 	-- (the whole list of an NPC: what the data gives it and it did not offer, though open to you, is not offered)
 	local changed = unknown
 	if whole and kind == "Npc" and ns.QUESTS then
+		-- (where you stand read now: your level kept with each, your log and quests done as they are, not as the
+		-- window last read them)
+		ns.ReadYou()
 		local offered = {}
 		for _, offer in ipairs(list) do
 			local id = tonumber(offer[1])
@@ -540,12 +625,14 @@ end
 -- Heard once Wanderer Quests is set up (ns.Init), never at loading.
 function ns.InitGivers()
 	local givers = CreateFrame("Frame")
-	for _, event in ipairs({ "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL" }) do
+	for _, event in ipairs({ "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL", "QUEST_TURNED_IN" }) do
 		pcall(givers.RegisterEvent, givers, event)
 	end
-	givers:SetScript("OnEvent", function(_, event)
+	givers:SetScript("OnEvent", function(_, event, ...)
 		local list = {}
-		if event == "GOSSIP_SHOW" then
+		if event == "QUEST_TURNED_IN" then
+			ns.TurnedIn(Clean((...)))
+		elseif event == "GOSSIP_SHOW" then
 			local offers = C_GossipInfo and Safe(C_GossipInfo.GetAvailableQuests)
 			for _, offer in ipairs(type(offers) == "table" and offers or EMPTY) do
 				list[#list + 1] = { Clean(offer.questID), Clean(offer.title), Clean(offer.questLevel) }
@@ -639,7 +726,8 @@ function ns.Texts(quest)
 		texts = Read(ns.TEXT_SOURCE) or false
 		ns.TEXT_SOURCE = nil
 	end
-	local entry = texts and texts[quest.id]
+	local seen = GameTexts()[quest.id]
+	local entry = type(seen) == "table" and seen or (texts and texts[quest.id])
 	if not entry then return nil, nil end
 	local name = Clean(Safe(UnitName, "player")) or ""
 	local class = Clean(Safe(UnitClass, "player")) or ""
@@ -697,34 +785,51 @@ function ns.ForYou(quest)
 	return forYou[quest.id] or ns.Offered(quest.id)
 end
 
+-- A quest before, when all of them are needed: done, or one of its own alternatives done instead (the game
+-- counts a quest closed by its rival as passed: one of a choice of three, the other side's version).
+local function DoneOrRival(id)
+	if Done(id) then return true end
+	local other = ns.Quest(id)
+	for _, rival in ipairs(other and other.exclusiveTo or EMPTY) do
+		if Done(rival) then return true end
+	end
+	return false
+end
+
 -- What must be done before: all of them, or one when they are the choices of a group.
 local function Open(quest)
 	local list = quest.before
 	if not list[1] then return true end
 	for _, id in ipairs(list) do
-		local finished = Done(id)
-		if quest.any and finished then return true end
-		if not quest.any and not finished then return false end
+		if quest.any and Done(id) then return true end
+		if not quest.any and not DoneOrRival(id) then return false end
 	end
 	return not quest.any
 end
 
 -- The quests after each one, read once in one walk of the data: nextOf (quest -> every quest with it before
 -- them), after (the same, those that need it: not as one choice among others, as reaching those says nothing
--- of this one).
+-- of this one). After too: the quest the record names as its next (nx), the one a breadcrumb leads to (bf):
+-- that one taken, the way to it is behind you.
 local nextOf, after
 local function Reverse()
 	if nextOf then return end
 	nextOf, after = {}, {}
+	local function Add(before, other)
+		after[before] = after[before] or {}
+		for _, known in ipairs(after[before]) do
+			if known == other then return end
+		end
+		table.insert(after[before], other)
+	end
 	for other, row in pairs(ns.QUESTS or EMPTY) do
 		for _, before in ipairs(row.before or EMPTY) do
 			nextOf[before] = nextOf[before] or {}
 			table.insert(nextOf[before], other)
-			if not row.any then
-				after[before] = after[before] or {}
-				table.insert(after[before], other)
-			end
+			if not row.any then Add(before, other) end
 		end
+		if row.nx and row.nx ~= other then Add(other, row.nx) end
+		if row.bf and row.bf ~= other then Add(other, row.bf) end
 	end
 end
 local function After(id)
@@ -753,21 +858,208 @@ local function Passed(id, depth)
 	return false, cut
 end
 
--- "done", "active", "closed" (another one of a choice taken), "passed" (one after it done), "locked" (a quest
--- before), "level", "available".
+-- Its twins: the quests of the same name (the data's, or Forever's own seen), name -> ids, made once (made
+-- again with the seen ones).
+local twins
+local function Twins()
+	if twins then return twins end
+	twins = {}
+	local function Add(name, id)
+		if type(name) ~= "string" or name == "" then return end
+		local list = twins[name] or {}
+		twins[name] = list
+		list[#list + 1] = id
+	end
+	for id, name in pairs(Names("quests")) do Add(name, id) end
+	for id, record in pairs(Offers()) do
+		if type(record) == "table" then Add(record.title, id) end
+	end
+	return twins
+end
+
+local function GiverKey(quest)
+	if not (quest.row or quest.seen) then return nil end -- (a quest known by its number only: no giver)
+	local who = ns.Giver(quest)
+	return who and who.kind and who.id and (who.kind .. ":" .. tostring(who.id)) or nil
+end
+
+-- Taken already under another number: the same quest Forever gives with an id of its own, or the same quest
+-- for another race from the same giver (one of them yours). Same name and same giver: taken or done, the
+-- other is not offered again.
+local function TwinTaken(quest)
+	local name = quest.name or quest.title
+	local list = name and Twins()[name]
+	if not list or not list[2] then return false end
+	local giver
+	for _, other in ipairs(list) do
+		if other ~= quest.id and (Done(other) or InLog(other)) then
+			giver = giver or GiverKey(quest) or false
+			local twin = ns.Quest(other)
+			if giver and twin and GiverKey(twin) == giver then return true end
+		end
+	end
+	return false
+end
+
+-- The givers whose quests you carry now (giver key -> true), from your log: once per drawing.
+local function BusyGivers()
+	if busy then return busy end
+	busy = {}
+	local log = C_QuestLog
+	if not (log and log.GetNumQuestLogEntries and log.GetInfo) then return busy end
+	for index = 1, Clean(Safe(log.GetNumQuestLogEntries)) or 0 do
+		local info = Safe(log.GetInfo, index)
+		local id = type(info) == "table" and not Clean(info.isHeader) and Clean(info.questID)
+		local quest = id and ns.Quest(id)
+		local key = quest and GiverKey(quest)
+		if key then busy[key] = true end
+	end
+	return busy
+end
+
+-- Another one of its choice taken or done (its rivals: one quest of a choice, the other side's version).
+local function Rivaled(quest)
+	for _, other in ipairs(quest.exclusiveTo or EMPTY) do
+		if Done(other) or InLog(other) then return true end
+	end
+	return false
+end
+
+-- The givers who offered you a quest still open to you (giver key -> the lowest level of them), once per
+-- drawing: a quest of theirs not offered alongside most often comes after it. Only quests still worth their
+-- "!" (not grey for you): a quest left aside long ago holds nothing back.
+local HOLD_BELOW = 3
+local function PendingGivers()
+	if pending then return pending end
+	pending = {}
+	local lowest = (you.level or 1) - HOLD_BELOW
+	for id in pairs(Offers()) do
+		local quest = not Done(id) and not InLog(id) and ns.Quest(id)
+		local level = quest and (quest.questLevel or 0)
+		local key = quest and level >= lowest and GiverKey(quest)
+		if key and not Rivaled(quest) and not TwinTaken(quest) and not Passed(id, 0) then
+			if not pending[key] or level < pending[key] then pending[key] = level end
+		end
+	end
+	return pending
+end
+
+-- A quest its giver never offered you, while you still carry one of that giver's, or while that giver still
+-- offers you one of the same level or below: Forever most often gives it after them (a quest before it the
+-- data does not know). To take again once you are done with them (or as soon as the giver offers it).
+local function HeldBack(quest)
+	local key = GiverKey(quest)
+	if key == nil then return false end
+	if BusyGivers()[key] == true then return true end
+	local lowest = PendingGivers()[key]
+	return lowest ~= nil and lowest <= (quest.questLevel or 0)
+end
+
+-- A quest handed in: what its giver and the one who took it back did not offer you may come now (the next of a
+-- chain, Forever's own most often). Their quests kept as not offered are asked again (they were asked again
+-- only once you went up a level). The game may not say it (Forever, now and then): then as before.
+function ns.TurnedIn(id)
+	local quest = type(id) == "number" and ns.Quest(id)
+	if not quest then return end
+	local keys = {}
+	local giver = GiverKey(quest)
+	if giver then keys[giver] = true end
+	local row = quest.row or EMPTY
+	for _, npc in ipairs(row.eu or EMPTY) do keys["Npc:" .. tostring(npc)] = true end
+	for _, object in ipairs(row.eo or EMPTY) do keys["Object:" .. tostring(object)] = true end
+	local closed, changed = NotOffers(), false
+	for other in pairs(closed) do
+		local waiting = ns.Quest(other)
+		local key = waiting and GiverKey(waiting)
+		if key and keys[key] then
+			closed[other] = nil
+			changed = true
+		end
+	end
+	if changed then statuses = {} end
+end
+
+-- Your professions (their skill line -> { name, rank }), once per drawing; nil when the game does not tell
+-- their lines (then a quest's profession is not asked: better shown than wrongly hidden).
+local function Skills()
+	if skills ~= nil then return skills or nil end
+	skills = false
+	local read = rawget(U, "Professions")
+	if not (read and _G.GetProfessions) then return nil end
+	local mine = {}
+	for _, trade in ipairs(read() or EMPTY) do
+		if not trade.line then return nil end
+		mine[trade.line] = trade
+	end
+	skills = mine
+	return mine
+end
+
+-- Your reputation with a faction (the game's points: 0 neutral, 3000 friendly...), once per drawing; nil
+-- when the game does not tell it.
+local function Standing(faction)
+	standings = standings or {}
+	if standings[faction] ~= nil then return standings[faction] or nil end
+	local value
+	local api = C_Reputation and C_Reputation.GetFactionDataByID
+	local data = api and Safe(api, faction)
+	if type(data) == "table" then
+		value = Clean(data.currentStanding)
+	elseif _G.GetFactionInfoByID then
+		local name, _, _, _, _, bar = Safe(_G.GetFactionInfoByID, faction)
+		if Clean(name) then value = Clean(bar) end
+	end
+	value = tonumber(value)
+	standings[faction] = value or false
+	return value
+end
+
+-- What the record asks besides the quests before: your profession at its rank, your standing (at least, or
+-- below). Each: true when you fall short; never when the game does not tell.
+local function SkillShort(row)
+	local need = row and row.sk
+	local mine = need and Skills()
+	if not mine then return false end
+	local trade = mine[need[1]]
+	return not trade or (trade.rank or 0) < need[2]
+end
+local function StandingShort(row)
+	if not row then return false end
+	local value = row.rp and Standing(row.rp[1])
+	if value and value < row.rp[2] then return true end
+	value = row.rx and Standing(row.rx[1])
+	return value ~= nil and value >= row.rx[2]
+end
+
+-- One of its breadcrumbs in your log: the game offers it once that one is handed in.
+local function CrumbInLog(row)
+	for _, id in ipairs(row and row.bc or EMPTY) do
+		if InLog(id) then return id end
+	end
+	return nil
+end
+
+-- "done", "active", "closed" (another one of a choice taken, or its twin), "passed" (one after it done, its
+-- time gone), "locked" (a quest before), "shut" (a profession, a standing, a quest to carry), "level",
+-- "available".
 local function Status(quest)
 	if Done(quest.id) then return "done" end
 	if InLog(quest.id) then return "active" end
-	for _, other in ipairs(quest.exclusiveTo) do
-		if Done(other) or InLog(other) then return "closed" end
-	end
+	if TwinTaken(quest) or Rivaled(quest) then return "closed" end
 	-- (one after it done: passed, even when offered once, a way in no longer offered)
 	if Passed(quest.id, 0) then return "passed" end
+	local row = quest.row
+	-- (above the last level it is offered at, or ended by another quest done)
+	if row and ((row.mx and (you.level or 1) > row.mx) or (row.uc and Done(row.uc))) then return "passed" end
+	-- (what your log holds now: a breadcrumb to hand in first, a quest that shuts it, the quest it goes with)
+	if CrumbInLog(row) then return "locked" end
+	if row and ((row.dq and InLog(row.dq)) or (row.pq and not InLog(row.pq))) then return "shut" end
 	-- (its giver offered it to you: open, whatever the data says comes before or what level it needs)
 	if ns.Offered(quest.id) then return "available" end
 	-- (its giver did not offer it to you at this level: not open yet)
-	if ns.NotOffered(quest.id) then return "locked" end
+	if ns.NotOffered(quest.id) or HeldBack(quest) then return "locked" end
 	if not Open(quest) then return "locked" end
+	if SkillShort(row) or StandingShort(row) then return "shut" end
 	if (quest.requiredLevel or 0) > (you.level or 1) then return "level" end
 	return "available"
 end
@@ -841,18 +1133,62 @@ function ns.ChainStep(quest)
 	return chain[1], chain[2]
 end
 
--- What still holds a quest back: the names of the quests before it not done yet (one of them is enough
--- when they are a choice: then none is done).
-function ns.Missing(quest)
-	local names = {}
-	if quest.any then
-		for _, id in ipairs(quest.before) do
-			if Done(id) then return names end
+-- A standing in the game's own words (its points: 3000 friendly, 9000 honored...).
+local STANDINGS = { { 42000, 8 }, { 21000, 7 }, { 9000, 6 }, { 3000, 5 }, { 0, 4 }, { -3000, 3 }, { -6000, 2 } }
+local function StandingWords(value)
+	local rank = 1
+	for _, step in ipairs(STANDINGS) do
+		if value >= step[1] then
+			rank = step[2]
+			break
 		end
 	end
-	for _, id in ipairs(quest.before) do
-		local other = ns.Quest(id)
-		if other and not Done(id) and ns.ForYou(other) then names[#names + 1] = ns.QuestName(other) end
+	return _G["FACTION_STANDING_LABEL" .. rank]
+end
+
+-- A profession's name: yours, else the game's.
+local function TradeName(line)
+	local mine = Skills()
+	if mine and mine[line] and mine[line].name then return mine[line].name end
+	local ui = rawget(_G, "C_TradeSkillUI")
+	return ui and ui.GetTradeSkillDisplayName and Clean(Safe(ui.GetTradeSkillDisplayName, line)) or nil
+end
+
+-- What still holds a quest back: the names of the quests before it not done yet (one of them is enough
+-- when they are a choice: then none is done); then what else it waits for: a breadcrumb of your log to hand
+-- in, the quest to carry or to be rid of, a profession at its rank, a standing.
+function ns.Missing(quest)
+	local names = {}
+	local oneDone = false
+	if quest.any then
+		for _, id in ipairs(quest.before) do
+			if Done(id) then oneDone = true end
+		end
+	end
+	if not oneDone then
+		for _, id in ipairs(quest.before) do
+			local other = ns.Quest(id)
+			local finished = quest.any and Done(id) or (not quest.any and DoneOrRival(id))
+			if other and not finished and ns.ForYou(other) then names[#names + 1] = ns.QuestName(other) end
+		end
+	end
+	local row = quest.row
+	if not row then return names end
+	local function Named(id)
+		local other = id and ns.Quest(id)
+		if other then names[#names + 1] = ns.QuestName(other) end
+	end
+	Named(CrumbInLog(row))
+	if row.dq and InLog(row.dq) then Named(row.dq) end
+	if row.pq and not InLog(row.pq) then Named(row.pq) end
+	if SkillShort(row) then
+		local name = TradeName(row.sk[1])
+		if name then names[#names + 1] = ("%s (%d)"):format(name, row.sk[2]) end
+	end
+	local value = row.rp and Standing(row.rp[1])
+	if value and value < row.rp[2] then
+		local faction, words = U.Faction(row.rp[1]), StandingWords(row.rp[2])
+		if faction and words then names[#names + 1] = ("%s: %s"):format(faction, words) end
 	end
 	return names
 end
@@ -1085,8 +1421,49 @@ function ns.GearGain(id) return Gear().gain[id] end
 -- A slot's quests, the best gain first.
 function ns.GearQuestIds(slot) return Gear().ids[slot] or EMPTY end
 
+-- Secrets ------------------------------------------------------------------------------------------------
+-- Chains of quests each started by an object of the world (a note, a plank, a figurine...), no NPC giving
+-- them: one place each, named after what its last quest gives (else its first quest's name).
+local secrets -- { places, ids = first quest -> quest ids }
+local function Secrets()
+	if secrets then return secrets end
+	secrets = { places = {}, ids = {} }
+	for id, row in pairs(ns.QUESTS or EMPTY) do
+		if row.sc then
+			if not secrets.ids[row.sc] then
+				secrets.ids[row.sc] = {}
+				secrets.places[#secrets.places + 1] = { id = row.sc }
+			end
+			table.insert(secrets.ids[row.sc], id)
+		end
+	end
+	for _, place in ipairs(secrets.places) do
+		local ids = secrets.ids[place.id]
+		table.sort(ids)
+		-- (its last quest: none comes after it in the chain)
+		local followed = {}
+		for _, id in ipairs(ids) do
+			for _, before in ipairs(ns.QUESTS[id].before or EMPTY) do followed[before] = true end
+		end
+		local reward
+		for _, id in ipairs(ids) do
+			local gives = not followed[id] and ns.QUESTS[id].rg
+			if gives and gives[1] then reward = gives[1] end
+		end
+		place.reward = reward
+		local named = reward and U.ItemName(reward)
+		-- (a reward the game has not sent yet: asked, the list named again when it comes)
+		if reward and not named then ns.AskItem(reward) end
+		place.name = named or ns.QuestName(ns.Quest(place.id))
+	end
+	return secrets
+end
+-- (a reward's name the game gives later: the names read again)
+function ns.ForgetSecrets() secrets = nil end
+
 function ns.Places(kind)
 	if kind == "gear" then return Gear().places end
+	if kind == "secrets" then return Secrets().places end
 	if kind == "class" then return ClassBands() end
 	return kind == "zones" and ns.Zones() or ns.Dungeons()
 end
@@ -1148,7 +1525,7 @@ end
 
 -- A giver seen offering one more: the lists made again when next asked (the map's givers too).
 local giverIndex
-function ns.ForgetSeen() seenQuests, index, giverIndex = nil, nil, nil end
+function ns.ForgetSeen() seenQuests, index, giverIndex, twins = nil, nil, nil, nil end
 
 -- Forever's own quests seen (id -> quest), for the map's givers.
 function ns.SeenQuestList() return ns.QUESTS and SeenQuests() or EMPTY end
@@ -1197,6 +1574,7 @@ end
 -- The quests of a place.
 local function QuestIds(place, kind)
 	if kind == "gear" then return Gear().ids[place] or EMPTY end
+	if kind == "secrets" then return Secrets().ids[place] or EMPTY end
 	if kind == "class" then
 		local band = ClassBands()[place]
 		return band and band.ids or EMPTY
@@ -1377,28 +1755,7 @@ function ns.ItemSources(item)
 	return out
 end
 
-function ns.DropSources(item)
-	local units = ns.HasData() and Drops()[item]
-	if type(units) ~= "table" then return EMPTY end
-	local hx, hy, here = U.Here()
-	local byName, list = {}, {}
-	for _, id in ipairs(units) do
-		local who = Someone("Npc", id)
-		local wx, wy, instance = WorldOf(who)
-		who.far = math.huge
-		if wx and hx and instance == here then who.far = math.sqrt((wx - hx) ^ 2 + (wy - hy) ^ 2) end
-		who.placed = who.x ~= nil
-		local same = byName[who.name]
-		if not same or (who.placed and not same.placed) or who.far < same.far then byName[who.name] = who end
-	end
-	for _, who in pairs(byName) do list[#list + 1] = who end
-	table.sort(list, function(a, b)
-		if a.placed ~= b.placed then return a.placed end
-		if a.far ~= b.far then return a.far < b.far end
-		return a.name < b.name
-	end)
-	return list
-end
+function ns.DropSources(item) return ns.HasData() and Nearest(Drops()[item], "Npc") or EMPTY end
 
 -- The givers of the data and of Forever's own quests seen, by the area they stand in: area -> { key -> { who,
 -- ids } }. Made once (and for your side: a giver of both sides is the one of yours).

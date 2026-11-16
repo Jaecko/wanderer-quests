@@ -22,6 +22,14 @@ local Skin = W and W.Skin
 -- (the family's gold: its accents)
 local GOLD = Skin and Skin.COLORS.gold
 local Safe, Clean = U.Safe, U.Clean
+-- (an item's modified click, the game's way: Shift links it, Ctrl tries it on; true when handled)
+local ItemClick = rawget(U, "ItemClick") or function(link)
+	if link and IsModifiedClick() and HandleModifiedItemClick then
+		HandleModifiedItemClick(link)
+		return true
+	end
+end
+local function LinkOf(item) local _, link = U.ItemInfo(item) return link end
 
 local WIDTH = 250
 local INDENT = 14 -- objectives under the title
@@ -29,12 +37,13 @@ local GAP = 6 -- between two quests
 local ITEM = 22 -- a quest item's button
 local NEW_TIME = 300 -- seconds a quest taken is "new"
 local REST = 0.7 -- the list at rest (calm)
-local IN_FIGHT = 0.25 -- the others during a fight
+local IN_FIGHT = 0.7 -- the others during a fight (their opacity on the screen, never below the rest's)
 local FADE_IN, FADE_OUT = 0.2, 0.6
 local FALLBACK = { "TOPRIGHT", "TOPRIGHT", -70, -250 }
 local TITLE_ROLE = Skin.COLORS.title
-local OBJECTIVE_ROLE = Skin.COLORS.objective
-local DONE_ROLE = Skin.COLORS.done
+-- (the kit's roles for this list: still to do as bright as the titles, done a quiet green; an older core: its own)
+local OBJECTIVE_ROLE = rawget(Skin.COLORS, "objective") or Skin.COLORS.title
+local DONE_ROLE = rawget(Skin.COLORS, "done") or { 0.45, 0.74, 0.5 }
 local COUNT_ROOM = 40 -- the count's room at the right of a row
 
 local root, heading, featuredFrame, listFrame, ground, insertLine
@@ -114,6 +123,76 @@ local function Watched(id)
 	return Clean(Safe(log.GetQuestWatchType, id)) ~= nil
 end
 
+-- Followed in the game's watch list (true: it is now). The game refuses past its limit: said in the chat then.
+local function WatchLimit()
+	local consts = _G.Constants and _G.Constants.QuestWatchConsts
+	return tonumber(consts and consts.MAX_QUEST_WATCHES) or tonumber(_G.MAX_WATCHABLE_QUESTS)
+end
+function ns.WatchQuest(id)
+	local log = Log()
+	if Watched(id) then return true end
+	if not (id and log and log.AddQuestWatch) then return false end
+	Safe(log.AddQuestWatch, id)
+	if Watched(id) then return true end
+	local most = WatchLimit()
+	local count = log.GetNumQuestWatches and Clean(Safe(log.GetNumQuestWatches))
+	-- (refused for another reason (the quest gone): nothing said)
+	if most and type(count) == "number" and count < most then return false end
+	local words = _G.QUEST_WATCH_TOO_MANY
+	W.Print((most and type(words) == "string" and words:find("%d", 1, true)) and words:format(most) or L.TRACKER_WATCH_FULL)
+	return false
+end
+
+-- The quest's kind as the game's log tells it, short after its level, as Classic writes it: "+" elite or for a
+-- group ("[30+]"), "d" a dungeon ("[30d]"), "r" a raid ("[60r]"); "" for none. group: the players advised.
+function ns.TagMark(id, group)
+	local log = Log()
+	if not (id and log) then return "" end
+	local tagID, elite
+	local info = log.GetQuestTagInfo and Safe(log.GetQuestTagInfo, id)
+	if type(info) == "table" then
+		tagID, elite = Clean(info.tagID), Clean(info.isElite)
+	elseif not log.GetQuestTagInfo and _G.GetQuestTagInfo then
+		tagID = Clean((Safe(_G.GetQuestTagInfo, id)))
+	end
+	local consts = _G.Constants and _G.Constants.QuestConsts or {}
+	local tags = _G.Enum and _G.Enum.QuestTag or {}
+	if tagID and tagID == (consts.QUEST_INFO_RAID_ID or tags.Raid or 62) then return "r" end
+	if tagID and tagID == (consts.QUEST_INFO_DUNGEON_ID or tags.Dungeon or 81) then return "d" end
+	if Clean(Safe(log.IsEliteQuest, id)) then elite = true end
+	group = tonumber(group) or Clean(Safe(log.GetSuggestedGroupSize, id))
+	if elite or (tagID and tagID == (consts.QUEST_INFO_ELITE_ID or tags.Group or 1)) or (type(group) == "number" and group > 1) then
+		return "+"
+	end
+	return ""
+end
+
+-- Failed (its time ran out, the one to escort fell...).
+local function Failed(id, info)
+	local log = Log()
+	if log and log.IsFailed and Clean(Safe(log.IsFailed, id)) then return true end
+	return type(info) == "table" and Clean(info.isFailed) and true or false
+end
+
+-- The seconds a timed quest has left (nil: not timed). index: its line in the log (the game's older way).
+local function TimeLeft(id, index)
+	local log = Log()
+	if log and log.GetTimeAllowed then
+		local total, elapsed = Safe(log.GetTimeAllowed, id)
+		total, elapsed = Clean(total), Clean(elapsed)
+		if type(total) == "number" and total > 0 and type(elapsed) == "number" then return math.max(0, total - elapsed) end
+		return nil
+	end
+	local timers, indexOf = _G.GetQuestTimers, _G.GetQuestIndexForTimer
+	if timers and indexOf then
+		timers = { Safe(timers) }
+		for at, left in ipairs(timers) do
+			if Clean(Safe(indexOf, at)) == index then return tonumber(Clean(left)) end
+		end
+	end
+	return nil
+end
+
 -- A quest as Wanderer Quests' own data knows it (nil when it does not).
 local function DataOf(id)
 	if not (ns.HasData and ns.HasData()) then return nil end
@@ -166,7 +245,8 @@ local function Objectives(id)
 	return list
 end
 
--- The quests followed: { id, index, title, level, header, complete, objectives, dungeon } in the log's order.
+-- The quests followed: { id, index, title, level, tag, header, complete, failed, timeLeft, readAt, objectives,
+-- dungeon } in the log's order.
 function ns.TrackedQuests()
 	local log, list, header = Log(), {}, nil
 	if not (log and log.GetNumQuestLogEntries and log.GetInfo) then return list end
@@ -180,9 +260,11 @@ function ns.TrackedQuests()
 			else
 				local id = Clean(info.questID)
 				if id and not Clean(info.isHidden) and Watched(id) then
+					local failed = Failed(id, info)
 					list[#list + 1] = { id = id, index = index, title = Clean(info.title) or ("#" .. id), level = Clean(info.level),
-						header = header, complete = Clean(Safe(log.IsComplete, id)) and true or false, objectives = Objectives(id),
-						dungeon = InDungeon(id) }
+						tag = ns.TagMark(id, Clean(info.suggestedGroup)), header = header, failed = failed,
+						complete = not failed and Clean(Safe(log.IsComplete, id)) and true or false, objectives = Objectives(id),
+						timeLeft = not failed and TimeLeft(id, index) or nil, readAt = GetTime(), dungeon = InDungeon(id) }
 				end
 			end
 		end
@@ -332,7 +414,11 @@ local function FocusChosen()
 	local map = _G.WorldMapFrame
 	if not (map and map.IsShown and map:IsShown()) then return end
 	local super = _G.C_SuperTrack
+	-- (a pin followed on the map, Wanderer Maps' arrow: not a quest let go)
+	if super and super.IsSuperTrackingUserWaypoint and Clean(Safe(super.IsSuperTrackingUserWaypoint)) then return end
 	local id = super and super.GetSuperTrackedQuestID and Clean(Safe(super.GetSuperTrackedQuestID)) or 0
+	-- (none: a choice only when nothing else is followed either)
+	if id == 0 and super and super.IsSuperTrackingAnything and Clean(Safe(super.IsSuperTrackingAnything)) then return end
 	local mine = Store()
 	if id == mine.featured then return end
 	if id ~= 0 and not Watched(id) then return end
@@ -356,7 +442,8 @@ end
 function ns.PutInFront(id)
 	local log = Log()
 	if not (id and log) then return end
-	if not Watched(id) and log.AddQuestWatch then Safe(log.AddQuestWatch, id) end
+	-- (the game's limit reached: said, and nothing put in front)
+	if not ns.WatchQuest(id) then return end
 	if Store().featured ~= id then ns.Feature(id) end
 end
 
@@ -501,6 +588,19 @@ function ns.Unfollow(id)
 	Refresh()
 end
 
+-- A quest of your log followed, or no longer (Shift and a click in the Quests list, as in the game's log); false
+-- when it is not in your log.
+function ns.ToggleWatch(id)
+	if not (id and Log() and InLog(id)) then return false end
+	if Watched(id) then
+		ns.Unfollow(id)
+	elseif ns.WatchQuest(id) then
+		Refresh()
+	end
+	Skin.Play("click")
+	return true
+end
+
 function ns.Fold(key)
 	local folded = Store().folded
 	folded[key] = not folded[key] or nil
@@ -521,28 +621,105 @@ local function GoHandIn(who, quest)
 	return ns.Follow(who, { kind = "handin", quest = quest.id, label = quest.title })
 end
 
+-- The game acts on the quest selected in its log: this one selected for a moment, the one you had put back after.
+local function WithSelected(id, act)
+	local log = Log()
+	if not (log and log.SetSelectedQuest) then return end
+	local before = log.GetSelectedQuest and Clean(Safe(log.GetSelectedQuest))
+	if before ~= id then Safe(log.SetSelectedQuest, id) end
+	local ok = act(log)
+	if before ~= id and log.GetSelectedQuest then Safe(log.SetSelectedQuest, before or 0) end
+	return ok
+end
+
+-- The items that go with a quest abandoned (the game's own question names them): their names, or nil.
+local function AbandonItems(log)
+	local list = log.GetAbandonQuestItems and Safe(log.GetAbandonQuestItems)
+	if type(list) ~= "table" then return nil end
+	local names = {}
+	for _, item in ipairs(list) do
+		item = Clean(item)
+		if item then names[#names + 1] = U.ItemName(item) or ("#" .. tostring(item)) end
+	end
+	return names[1] and table.concat(names, ", ") or nil
+end
+
 local function Abandon(quest)
-	Skin.Ask(L.TRACKER_ABANDON_ASK:format(quest.title), function()
-		local log = Log()
-		if not log then return end
-		Safe(log.SetSelectedQuest, quest.id)
+	local lost
+	WithSelected(quest.id, function(log)
 		Safe(log.SetAbandonQuest)
-		Safe(log.AbandonQuest)
+		lost = AbandonItems(log)
+	end)
+	local question = L.TRACKER_ABANDON_ASK:format(quest.title)
+	if lost then question = question .. "\n" .. L.ABANDON_ITEMS:format(lost) end
+	Skin.Ask(question, function()
+		local ok = WithSelected(quest.id, function(log)
+			return pcall(function()
+				log.SetAbandonQuest()
+				log.AbandonQuest()
+			end)
+		end)
+		if not ok then W.Print(L.QUEST_REFUSED) end
 	end)
 end
 
 local function Share(quest)
-	local log = Log()
-	if not log then return end
-	Safe(log.SetSelectedQuest, quest.id)
-	if QuestLogPushQuest then Safe(QuestLogPushQuest) end
+	local ok = QuestLogPushQuest and WithSelected(quest.id, function() return pcall(QuestLogPushQuest) end)
+	if not ok then W.Print(L.QUEST_REFUSED) end
 end
 
--- The right click on a quest: in front, its place, its sheet, the way to who takes it, the chat, share, abandon.
+local function Shareable(id)
+	local log = Log()
+	return IsInGroup and Clean(Safe(IsInGroup)) and log and log.IsPushableQuest and Clean(Safe(log.IsPushableQuest, id)) and true or false
+end
+
+-- A quest's actions, one set wherever a quest is offered (this list's right click, the Quests window's list, Wanderer
+-- Maps' atlas): { text, glyph, onClick, front }. quest: { id, title, level }; where: "tracker", "window" or "atlas"
+-- (what that place's own click already does is left out).
+function ns.QuestActions(quest, where)
+	local list = {}
+	if not (quest and quest.id) then return list end
+	local known = ns.HasData() and ns.Quest(quest.id)
+	quest.title = quest.title or (known and ns.QuestName(known)) or ("#" .. quest.id)
+	local function Add(text, glyph, run, front) list[#list + 1] = { text = text, glyph = glyph, onClick = run, front = front } end
+	local log = Log()
+	local inLog = log ~= nil and InLog(quest.id)
+	local watched = inLog and Watched(quest.id)
+	if watched and On() then
+		Add(Store().featured == quest.id and L.TRACKER_UNFEATURE or L.TRACKER_FEATURE, "star", function() ns.Feature(quest.id) end, true)
+	end
+	if where ~= "window" and ns.Reveal and known then Add(L.TRACKER_SHEET, "chevron", function() ns.Reveal(quest.id) end) end
+	-- (Wanderer Maps: the quest on its map in the atlas)
+	if where ~= "atlas" and inLog and ns.OnAtlas() then
+		Add(L.TRACKER_ATLAS, "chevron", function() _G.WandererMaps.ShowQuest(quest.id, quest.title) end)
+	end
+	local who = inLog and Clean(Safe(log.IsComplete, quest.id)) and Ender(quest.id)
+	if who then Add(L.TRACKER_GO:format(who.name or "?"), "chevron", function() GoHandIn(who, quest) end) end
+	-- (a link in the chat: the mouse's, the pad writes no line)
+	if not (U.UsingPad and U.UsingPad()) then Add(L.TRACKER_LINK, "chevron", function() ns.LinkQuest(quest) end) end
+	if inLog and Shareable(quest.id) then Add(L.TRACKER_SHARE, "plus", function() Share(quest) end) end
+	if inLog then
+		if watched then
+			Add(L.TRACKER_UNFOLLOW, "minus", function() ns.Unfollow(quest.id) end)
+		else
+			Add(L.TRACKER_FOLLOW, "plus", function() if ns.WatchQuest(quest.id) then Refresh() end end)
+		end
+		Add(L.TRACKER_ABANDON, "close", function() Abandon(quest) end)
+	end
+	return list
+end
+
+-- The right click on a quest: in front, its place, then the quest's own actions (its sheet, the atlas, the way to
+-- who takes it, the chat, share, stop following, abandon).
 local function QuestMenu(owner, quest)
+	local actions = ns.QuestActions(quest, "tracker")
 	U.Menu(owner, function(_, menu)
 		menu:CreateTitle(quest.title)
-		menu:CreateButton(Store().featured == quest.id and L.TRACKER_UNFEATURE or L.TRACKER_FEATURE, function() ns.Feature(quest.id) end)
+		local rest = 1
+		if actions[1] and actions[1].front then
+			menu:CreateButton(actions[1].text, actions[1].onClick)
+			rest = 2
+		end
 		if not InCombatLockdown() then
 			menu:CreateButton(L.MOVE_UP, function() ns.Step(quest.id, "up") end)
 			menu:CreateButton(L.MOVE_DOWN, function() ns.Step(quest.id, "down") end)
@@ -550,23 +727,7 @@ local function QuestMenu(owner, quest)
 			menu:CreateButton(L.TRACKER_BOTTOM, function() ns.Step(quest.id, "bottom") end)
 		end
 		menu:CreateDivider()
-		if ns.Reveal then menu:CreateButton(L.TRACKER_SHEET, function() ns.Reveal(quest.id) end) end
-		-- (Wanderer Maps: the quest on its map in the atlas)
-		if ns.OnAtlas() then
-			menu:CreateButton(L.TRACKER_ATLAS, function() _G.WandererMaps.ShowQuest(quest.id, quest.title) end)
-		end
-		local who = quest.complete and Ender(quest.id)
-		if who then menu:CreateButton(L.TRACKER_GO:format(who.name or "?"), function() GoHandIn(who, quest) end) end
-		-- (a link in the chat: the mouse's, the pad writes no line)
-		if not (U.UsingPad and U.UsingPad()) then
-			menu:CreateButton(L.TRACKER_LINK, function() U.ChatInsert(Clean(Safe(GetQuestLink, quest.id))) end)
-		end
-		local log = Log()
-		if IsInGroup and IsInGroup() and log and log.IsPushableQuest and Clean(Safe(log.IsPushableQuest, quest.id)) then
-			menu:CreateButton(L.TRACKER_SHARE, function() Share(quest) end)
-		end
-		menu:CreateButton(L.TRACKER_UNFOLLOW, function() ns.Unfollow(quest.id) end)
-		menu:CreateButton(L.TRACKER_ABANDON, function() Abandon(quest) end)
+		for index = rest, #actions do menu:CreateButton(actions[index].text, actions[index].onClick) end
 	end)
 end
 
@@ -708,7 +869,7 @@ local function Free(row)
 	row:Hide()
 	row:ClearAllPoints()
 	row.quest, row.kind, row.onClick, row.tip, row.featured, row.objective, row.compact = nil, nil, nil, nil, nil, nil, nil
-	row.item, row.questsSources = nil, nil
+	row.item, row.questsSources, row.timer = nil, nil, nil
 	pool[#pool + 1] = row
 end
 
@@ -718,14 +879,14 @@ local function Release()
 	wipe(rows)
 end
 
--- A row of a kind, its words set: "heading", "group", "quest", "objective", "turnin", "more".
+-- A row of a kind, its words set: "heading", "group", "quest", "objective", "failed", "timer", "turnin", "more".
 local function Line(parent, kind, words, role, template)
 	local row = Row()
 	row:SetParent(parent)
 	row.kind = kind
 	-- (a controller goes from title to title, as on the game's list: what is written under a title is not stopped on,
 	-- but for the line to hand it in and an item asked, where it comes from)
-	row.padIgnored = kind == "objective" or nil
+	row.padIgnored = (kind == "objective" or kind == "failed" or kind == "timer") or nil
 	row.padAlt, row.padAltWord = nil, nil
 	-- (the top button: a right click's menu, on a quest's lines and the heading; a zone's name and "n more" have none)
 	row.padRight = (kind == "quest" or kind == "turnin" or kind == "objective" or kind == "heading") or nil
@@ -748,7 +909,7 @@ local function Line(parent, kind, words, role, template)
 	row.text:SetPoint("LEFT", row, "LEFT", 0, 0)
 	row.text:SetWordWrap(false)
 	row.room = 0
-	row:EnableMouse(kind ~= "objective" and kind ~= "more")
+	row:EnableMouse(kind ~= "objective" and kind ~= "more" and kind ~= "failed" and kind ~= "timer")
 	row:EnableMouseWheel(true)
 	row:Show()
 	rows[#rows + 1] = row
@@ -782,7 +943,7 @@ local function Height(row, least, left)
 end
 
 local function TitleWords(quest)
-	local words = quest.level and ("[%d] %s"):format(quest.level, quest.title) or quest.title
+	local words = quest.level and ("[%d%s] %s"):format(quest.level, quest.tag or "", quest.title) or quest.title
 	if quest.new then words = words .. "  " .. Skin.Colorize(L.TRACKER_NEW, "gold") end
 	return words
 end
@@ -795,8 +956,30 @@ local function TitleColor(quest)
 	return TITLE_ROLE
 end
 
--- How far a quest is on one line (compact): its objectives done of all, or a check once it is done.
+-- Failed, in the game's word, in red.
+local function FailedWords() return Skin.Colorize(_G.FAILED or "", "bad") end
+
+-- The time a timed quest has left, as a clock ("4:05", "1:02:00"), red in its last minute.
+local function Clock(row)
+	local left = math.max(0, math.floor(row.timer.left - (GetTime() - row.timer.at)))
+	local clock = left >= 3600 and ("%d:%02d:%02d"):format(math.floor(left / 3600), math.floor(left % 3600 / 60), left % 60)
+		or ("%d:%02d"):format(math.floor(left / 60), left % 60)
+	return Skin.Colorize(clock, left < 60 and "bad" or "text")
+end
+
+-- A timed quest's words: the line under its title, or its count on one line (compact).
+local function WriteTimer(row)
+	if row.kind == "timer" then
+		row.text:SetText((_G.TIME_REMAINING and (_G.TIME_REMAINING .. " ") or "") .. Clock(row))
+	else
+		row.count:SetText(Clock(row))
+	end
+end
+
+-- How far a quest is on one line (compact): its objectives done of all, or a check once it is done (failed: said;
+-- timed: its time left).
 local function HowFar(quest)
+	if quest.failed then return FailedWords() end
 	if quest.complete then return Skin.GlyphText("check", "good", 11) end
 	local done, total = 0, #quest.objectives
 	for _, objective in ipairs(quest.objectives) do if objective.done then done = done + 1 end end
@@ -818,16 +1001,44 @@ local function DrawQuest(parent, quest, y, featured, compact)
 	title.handle:SetShown(not featured)
 	title.onClick = function(self, button)
 		if button == "RightButton" then return QuestMenu(self, quest) end
-		if IsShiftKeyDown() then return ns.Unfollow(quest.id) end
+		-- (Shift, as the game's list: its link while you write in the chat, else no longer followed)
+		if IsShiftKeyDown() then
+			if ns.Writing() then return ns.LinkQuest(quest) end
+			return ns.Unfollow(quest.id)
+		end
 		if ns.OnAtlas() and _G.WandererMaps.ShowQuest(quest.id, quest.title) then return end
 		ns.Feature(quest.id)
 	end
 	local top = y
 	y = y + Height(title, featured and 18 or 15, featured and 10 or 0)
-	if compact and not featured then
-		-- (one line: how far, or done; written again in place in a fight)
+	local left = (featured and 10 or 0) + INDENT
+	local oneLine = compact and not featured
+	if quest.timeLeft and not (oneLine or quest.failed or quest.complete) then
+		-- (a timed quest: the time it has left under its title, counted down each second)
+		local timer = Line(parent, "timer", "", "soft", "GameFontHighlight")
+		timer.quest = quest
+		timer.timer = { left = quest.timeLeft, at = quest.readAt or GetTime() }
+		WriteTimer(timer)
+		timer:SetPoint("TOPLEFT", parent, "TOPLEFT", left, -y)
+		timer:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+		y = y + Height(timer, 13, left)
+	end
+	if oneLine then
+		-- (one line: how far, or done, or the time left; written again in place in a fight)
 		title.compact = true
 		title.count:SetText(HowFar(quest))
+		if quest.timeLeft and not quest.complete then
+			title.timer = { left = quest.timeLeft, at = quest.readAt or GetTime() }
+			WriteTimer(title)
+		end
+	elseif quest.failed then
+		-- (failed: said in place of its objectives, in red, as the game's log says it)
+		local failed = Line(parent, "failed", FailedWords(), "bad", "GameFontHighlight")
+		failed.quest = quest
+		Mark(failed, "close", "bad", 9)
+		failed:SetPoint("TOPLEFT", parent, "TOPLEFT", left, -y)
+		failed:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+		y = y + Height(failed, 14, left)
 	elseif quest.complete and not InCombatLockdown() then
 		local who = Ender(quest.id)
 		local turnin = Line(parent, "turnin", who and L.TRACKER_TURN_IN_TO:format(who.name or "?") or L.TRACKER_TURN_IN, "good", "GameFontHighlight")
@@ -845,9 +1056,9 @@ local function DrawQuest(parent, quest, y, featured, compact)
 		for index, objective in ipairs(quest.objectives) do
 			local line = Line(parent, "objective", objective.words, objective.done and DONE_ROLE or OBJECTIVE_ROLE, "GameFontHighlight")
 			line.quest, line.objective = quest, index
-			if objective.done then Mark(line, "check", "good", 9) else Mark(line, "dot", "kicker", 6) end
+			if objective.done then Mark(line, "check", "good", 12) else Mark(line, "dot", "kicker", 6) end
 			line.count:SetText(objective.count or "")
-			local c = objective.done and DONE_ROLE or Skin.COLORS.title
+			local c = objective.done and DONE_ROLE or OBJECTIVE_ROLE
 			line.count:SetTextColor(c[1], c[2], c[3])
 			line.text:SetWordWrap(true)
 			-- (an item asked, still to gather: under the mouse where it comes from, a click the way to the nearest)
@@ -861,6 +1072,7 @@ local function DrawQuest(parent, quest, y, featured, compact)
 				if ns.OnAtlas() then line.padAlt, line.padAltWord = function(self) ns.SourceCard(item, self) end, "SOURCES" end
 				line.onClick = function(self, button)
 					if button == "RightButton" then return QuestMenu(self, quest) end
+					if ItemClick(LinkOf(item)) then return end
 					ns.SourceCard(item, self)
 				end
 			end
@@ -896,6 +1108,12 @@ local function ItemButton()
 	button.padPrimary, button.padOutside = "LeftButton", true -- (it stands left of its row, outside the list)
 	button:SetSize(ITEM, ITEM)
 	button:RegisterForClicks("AnyUp", "AnyDown")
+	-- (the game's way: Shift links the item, Ctrl tries it on; a modified click never uses it)
+	button:SetAttribute("shift-type1", "")
+	button:SetAttribute("ctrl-type1", "")
+	button:SetScript("PreClick", function(self, _, down)
+		if not down then ItemClick(self.link) end
+	end)
 	button.icon = button:CreateTexture(nil, "ARTWORK")
 	button.icon:SetAllPoints()
 	button.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
@@ -959,13 +1177,29 @@ local function InPlace()
 				row.count:SetText(objective.count or "")
 				local c = objective.done and DONE_ROLE or OBJECTIVE_ROLE
 				row.text:SetTextColor(c[1], c[2], c[3])
-				if objective.done then Mark(row, "check", "good", 9) end
+				if objective.done then Mark(row, "check", "good", 12) end
 			end
 		elseif quest and row.kind == "quest" and row.compact then
 			row.count:SetText(HowFar(quest))
 		end
+		-- (a timer read again from the game: its clock follows it)
+		if quest and row.timer and quest.timeLeft then
+			row.timer.left, row.timer.at = quest.timeLeft, quest.readAt or GetTime()
+			WriteTimer(row)
+		end
 	end
 	for _, button in pairs(items) do Cooldown(button) end
+end
+
+-- The clocks of the timed quests shown, written again each second (nothing done while none is shown).
+local ticking = 0
+local function TickTimers(elapsed)
+	ticking = ticking + elapsed
+	if ticking < 1 then return end
+	ticking = 0
+	for _, row in ipairs(rows) do
+		if row.timer and row:IsShown() then WriteTimer(row) end
+	end
 end
 
 local function Fit()
@@ -1012,7 +1246,7 @@ local function Draw()
 	local head = Line(heading, "heading", U.Upper(L.QUESTS) .. "  " .. Skin.Colorize(tostring(count), "muted"), "kicker", "GameFontNormalSmall")
 	head:SetPoint("TOPLEFT", heading, "TOPLEFT", 0, 0)
 	head:SetPoint("RIGHT", heading, "RIGHT", 0, 0)
-	Mark(head, mine.closed and "plus" or "chevron", "kicker", 9)
+	Mark(head, mine.closed and "chevron" or "down", "kicker", 9)
 	head.rule:ClearAllPoints()
 	head.rule:SetPoint("TOPLEFT", head, "BOTTOMLEFT", 0, -1)
 	head.rule:SetPoint("TOPRIGHT", head, "BOTTOMRIGHT", 0, -1)
@@ -1195,14 +1429,16 @@ local function Calm(elapsed)
 	end
 	-- (U.Hovered tests the mouse itself; an older Wanderer has only U.IsMouseOver)
 	local over = (U.Hovered or U.IsMouseOver)(root) or dragging ~= nil
+	local fight = (InCombatLockdown() or Clean(Safe(UnitAffectingCombat, "player"))) and Setting("trackerCombat") ~= false and not over
+	-- (in a fight the quest in front comes up whole and the others stay as at rest: the two fades never add up)
 	local target = 1
-	if not over and Setting("trackerRest") ~= false then target = REST end
+	if not (over or fight) and Setting("trackerRest") ~= false then target = REST end
 	-- (written only when it changes: this runs on every frame the list is shown)
 	local alpha = tween:Step(target, elapsed, FADE_IN, FADE_OUT)
 	if root:GetAlpha() ~= alpha then root:SetAlpha(alpha) end
-	local fight = (InCombatLockdown() or Clean(Safe(UnitAffectingCombat, "player"))) and Setting("trackerCombat") ~= false and not over
-	local listAlpha = fight and IN_FIGHT or 1
+	local listAlpha = fight and math.min(1, IN_FIGHT / math.max(alpha, 0.01)) or 1
 	if listFrame:GetAlpha() ~= listAlpha then listFrame:SetAlpha(listAlpha) end
+	TickTimers(elapsed)
 end
 
 -- The game's list ----------------------------------------------------------------------------------------------------
@@ -1220,40 +1456,143 @@ end
 
 function ns.TrackerDefaultPlace() return gameSpot or FALLBACK end
 
--- The game's list away while ours is on (out of a fight: it holds protected buttons), back when ours is off.
+-- While ours is on, only the game's quest parts are put away: its other parts (a scenario, achievements, bonus
+-- objectives, recipes, the Traveler's Log...) stay where they are, drawn up into the room the quests left. The game
+-- keeps running its list as it does: nothing of it is called or changed, its drawing is only followed (a quest part
+-- made unseen as soon as it is drawn, hidden and the rest drawn up a moment after, out of a fight: it holds protected
+-- buttons). Nothing else to show: the whole list away. Ours off: everything given back.
+local QUEST_PARTS = { "QuestObjectiveTracker", "CampaignQuestObjectiveTracker", "WorldQuestObjectiveTracker" }
+local OTHER_PARTS = { "ScenarioObjectiveTracker", "UIWidgetObjectiveTracker", "AchievementObjectiveTracker",
+	"BonusObjectiveTracker", "ProfessionsRecipeTracker", "MonthlyActivitiesObjectiveTracker", "AdventureObjectiveTracker",
+	"InitiativeTasksObjectiveTracker" }
 local hooked = false
-local hiddenByUs = false
-local function GameList()
-	local frame = _G.ObjectiveTrackerFrame
-	if not (frame and settled) then return end
+local partsHooked = {}
+local hiddenByUs = false -- the whole list put away (or unseen in a fight) here
+local partsAway = {} -- the quest parts put away here
+local GameList
+
+local function IsQuestPart(part)
+	for _, name in ipairs(QUEST_PARTS) do
+		if _G[name] == part then return true end
+	end
+	return false
+end
+
+-- The other parts with something to show, in the game's own order.
+local function OtherParts(frame)
+	local list = {}
+	local parts = type(frame.modules) == "table" and frame.modules or nil
+	if not parts then
+		parts = {}
+		for _, name in ipairs(OTHER_PARTS) do parts[#parts + 1] = _G[name] end
+	end
+	for _, part in ipairs(parts) do
+		if type(part) == "table" and not IsQuestPart(part) and part.GetContentsHeight then
+			local height = Clean(Safe(part.GetContentsHeight, part))
+			if type(height) == "number" and height > 0 then list[#list + 1] = part end
+		end
+	end
+	return list
+end
+
+-- The other parts drawn up one under the other, as the game places them (its own spacing), the quests' room gone.
+local function DrawUp(frame, parts)
+	local top = tonumber(frame.topModulePadding)
+	if not top then return end -- (not the list as it is known: left as the game drew it)
+	local spacing = tonumber(frame.moduleSpacing) or 10
+	local before
+	for _, part in ipairs(parts) do
+		part:ClearAllPoints()
+		if before then part:SetPoint("TOP", before, "BOTTOM", 0, -spacing) else part:SetPoint("TOP", 0, -top) end
+		part:SetPoint("LEFT", frame, "LEFT", tonumber(part.leftMargin) or 0, 0)
+		before = part
+	end
+	local back = frame.NineSlice
+	if before and back and back.SetPoint then back:SetPoint("BOTTOM", before, "BOTTOM", 0, -(tonumber(frame.bottomModulePadding) or 10)) end
+end
+
+local function QuestPartsAway(fight)
+	for _, name in ipairs(QUEST_PARTS) do
+		local part = _G[name]
+		if type(part) == "table" and part.SetAlpha then
+			partsAway[part] = true
+			if part:GetAlpha() ~= 0 then part:SetAlpha(0) end
+			if not fight and part:IsShown() then part:Hide() end
+		end
+	end
+end
+
+-- Once the game has drawn its list (a moment after, never inside its own drawing).
+local followPending = false
+local function FollowLater()
+	if followPending then return end
+	followPending = true
+	C_Timer.After(0, function()
+		followPending = false
+		GameList()
+	end)
+end
+
+local function Hook(frame)
 	if not hooked and frame.HookScript then
 		hooked = true
-		frame:HookScript("OnShow", function(self)
-			if not On() then return end
-			hiddenByUs = true
-			if InCombatLockdown() then
-				self:SetAlpha(0)
-				U.AfterFight("questsGameList", GameList)
-			else
-				self:Hide()
-			end
-		end)
+		-- (at once, as it shows: never seen a moment with only its quests' empty room)
+		frame:HookScript("OnShow", function() if On() then GameList() end end)
 	end
+	for _, name in ipairs(QUEST_PARTS) do
+		local part = _G[name]
+		if type(part) == "table" and not partsHooked[part] and type(part.Update) == "function" and hooksecurefunc then
+			partsHooked[part] = true
+			-- (unseen at once: only its opacity; the rest a moment after)
+			hooksecurefunc(part, "Update", function(self)
+				if not On() then return end
+				self:SetAlpha(0)
+				FollowLater()
+			end)
+		end
+	end
+end
+
+GameList = function()
+	local frame = _G.ObjectiveTrackerFrame
+	if not (frame and settled) then return end
+	Hook(frame)
+	local fight = InCombatLockdown()
 	if On() then
 		ReadGameSpot()
-		if InCombatLockdown() then
+		QuestPartsAway(fight)
+		local others = OtherParts(frame)
+		if others[1] then
+			-- (other parts to show: the list stays, without its quests)
+			if hiddenByUs and frame:GetAlpha() == 0 then frame:SetAlpha(1) end
+			if fight then
+				hiddenByUs = hiddenByUs and not frame:IsShown()
+				return U.AfterFight("questsGameList", GameList)
+			end
+			if hiddenByUs and not frame:IsShown() then frame:Show() end
+			hiddenByUs = false
+			pcall(DrawUp, frame, others)
+			return
+		end
+		hiddenByUs = true
+		if fight then
 			frame:SetAlpha(0)
-			hiddenByUs = true
 			return U.AfterFight("questsGameList", GameList)
 		end
 		frame:Hide()
-		hiddenByUs = true
-	elseif hiddenByUs then
-		-- (given back only when it was put away here: another addon's own choice is left alone)
-		if InCombatLockdown() then return U.AfterFight("questsGameList", GameList) end
-		hiddenByUs = false
-		frame:SetAlpha(1)
-		frame:Show()
+	elseif hiddenByUs or next(partsAway) then
+		-- (given back only what was put away here: another addon's own choice is left alone)
+		if fight then return U.AfterFight("questsGameList", GameList) end
+		for part in pairs(partsAway) do
+			part:SetAlpha(1)
+			part:Show()
+		end
+		wipe(partsAway)
+		if hiddenByUs then
+			hiddenByUs = false
+			frame:SetAlpha(1)
+			frame:Show()
+		end
 	end
 end
 
@@ -1352,7 +1691,7 @@ function ns.InitTracker()
 		"SUPER_TRACKING_CHANGED" }) do
 		pcall(events.RegisterEvent, events, event)
 	end
-	events:SetScript("OnEvent", function(_, event, unit)
+	events:SetScript("OnEvent", function(_, event, unit, ...)
 		if event == "QUEST_LOG_UPDATE" and settled then logRead = true end
 		if event == "UNIT_QUEST_LOG_CHANGED" and unit ~= "player" then return end
 		if event == "SUPER_TRACKING_CHANGED" then return On() and FocusChosen() end
@@ -1371,15 +1710,20 @@ function ns.InitTracker()
 		end
 		if event == "PLAYER_REGEN_ENABLED" and not dirty then return end
 		if event == "QUEST_TURNED_IN" then NoteHandedIn(unit) end
-		-- (a moment later: the game has put it in its list and followed it)
-		if event == "QUEST_ACCEPTED" and On() then C_Timer.After(0.3, function() Inherit(unit) end) end
+		-- (a moment later: the game has put it in its list and followed it; the quest is the last value, after the log's
+		-- line on a client that sends both)
+		if event == "QUEST_ACCEPTED" and On() then
+			local id = Clean(select("#", ...) > 0 and select(select("#", ...), ...) or unit)
+			C_Timer.After(0.3, function() Inherit(id) end)
+		end
 		Refresh()
 	end)
 	if W.OnCharacterForgotten then
-		-- (its list's order and place, what givers offered it (Data.lua's Offers), its window's state (Window.lua))
+		-- (its list's order and place, what givers offered it or did not (Data.lua's Offers, NotOffers), its window's
+		-- state (Window.lua))
 		W.OnCharacterForgotten(function(key)
 			if type(WandererQuestsDB) ~= "table" then return end
-			for _, part in ipairs({ "tracker", "offered", "view" }) do
+			for _, part in ipairs({ "tracker", "offered", "notOffered", "view" }) do
 				if type(WandererQuestsDB[part]) == "table" then WandererQuestsDB[part][key] = nil end
 			end
 		end)

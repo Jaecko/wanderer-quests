@@ -1,6 +1,8 @@
 # Wanderer Quests 1.2.26
 
 ### Fixed
+- Quests a giver did not offer you are judged at your current level, even before the quest window was opened.
+- Forgetting a character also forgets what givers did not offer it.
 - A quest its giver does not offer you (Forever closed or changed it) is no longer shown to take, on the map or in the lists, once you have spoken to that giver; asked again when you go up a level, or as soon as it is offered.
 
 ### Changed

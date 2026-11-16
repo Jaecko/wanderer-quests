@@ -33,15 +33,13 @@ local BAR_WIDTH = 40 -- a place's small bar, on the left
 -- The game's own signs: a quest to take, a quest in your log.
 local AVAILABLE_ICON = "Interface\\GossipFrame\\AvailableQuestIcon"
 local ACTIVE_ICON = "Interface\\GossipFrame\\ActiveQuestIcon"
+local INCOMPLETE_ICON = "Interface\\GossipFrame\\IncompleteQuestIcon" -- (held, not finished yet: the game's grey "?")
 local DONE_ICON = "Interface\\RaidFrame\\ReadyCheck-Ready"
 ns.AVAILABLE_ICON = AVAILABLE_ICON
 
--- Where you stand with a quest, in a color.
+-- A quest behind you (done, passed, another of its choice taken), in a color.
 local C = Skin.COLORS
-local STATUS = {
-	done = C.good, passed = C.good, active = C.gold, available = C.text,
-	locked = C.muted, level = C.bad, closed = C.done,
-}
+local STATUS = { closed = C.done }
 ns.STATUS_COLORS = STATUS -- (the quest sheet's too)
 local FAINT = C.muted
 -- The bags' green arrow (the game's), else a green plus.
@@ -56,7 +54,7 @@ local shownPlace -- the place drawn last ("kind:id")
 local kind -- the tab shown: "class", "dungeons" or "zones" (the last one shown, kept)
 local chosenBy = {} -- each tab: the place chosen (its id)
 local tabs = {}
-local TABS = { { "class", "CLASS" }, { "dungeons", "DUNGEONS" }, { "zones", "TAB_ZONES" }, { "books", "BOOKS" }, { "gear", "GEAR" } }
+local TABS = { { "class", "CLASS" }, { "dungeons", "DUNGEONS" }, { "zones", "TAB_ZONES" }, { "secrets", "SECRETS" }, { "books", "BOOKS" }, { "gear", "GEAR" } }
 
 -- A tab's name: the class one says your class.
 local function TabName(tab)
@@ -123,8 +121,8 @@ function ns.StatusChip(quest, status)
 	return nil
 end
 
--- A quest's sign, the game's own: "!" to take, "?" in your log (bright when ready to hand in), a check when
--- done, a dot when it waits (another quest before it, a level), nothing when another one was chosen.
+-- A quest's sign, the game's own: "!" to take, "?" in your log (yellow when ready to hand in, grey before), a check when
+-- done, a dot when it waits (another quest before it, a level, a profession, a standing), nothing when another one was chosen.
 function ns.SetSign(texture, quest, status)
 	texture:SetAlpha(1)
 	texture:SetTexCoord(0, 1, 0, 1)
@@ -132,12 +130,11 @@ function ns.SetSign(texture, quest, status)
 	if status == "available" then
 		texture:SetTexture(AVAILABLE_ICON)
 	elseif status == "active" then
-		texture:SetTexture(ACTIVE_ICON)
-		texture:SetAlpha(ns.Ready(quest) and 1 or 0.45)
+		texture:SetTexture(ns.Ready(quest) and ACTIVE_ICON or INCOMPLETE_ICON)
 	elseif status == "done" or status == "passed" then
 		Skin.GlyphOn(texture, "check")
 		texture:SetVertexColor(C.good[1], C.good[2], C.good[3])
-	elseif status == "locked" or status == "level" then
+	elseif status == "locked" or status == "level" or status == "shut" then
 		Skin.GlyphOn(texture, "dot")
 		texture:SetVertexColor(C.muted[1], C.muted[2], C.muted[3])
 	else
@@ -264,7 +261,8 @@ local function DrawQuests()
 			node.name = ns.QuestName(quest)
 			node.indent = depth * INDENT + SIGN + 4 + LEVEL_WIDTH + 8
 			local done = node.status == "done" or node.status == "passed"
-			node.color = done and STATUS.closed or node.dungeon and C.text or C.soft
+			-- (another of a choice taken: muted, its sign faded; its words stay readable)
+			node.color = (done or node.status == "closed") and STATUS.closed or node.dungeon and C.text or C.soft
 			-- A reward better for you: the green arrow (not on a quest behind you).
 			local better = not done and node.status ~= "closed" and ns.RewardUpgrade(quest)
 			if better then node.name = node.name .. "  " .. UPGRADE end
@@ -278,10 +276,9 @@ local function DrawQuests()
 			row.level:ClearAllPoints()
 			row.level:SetPoint("LEFT", row.sign, "RIGHT", 4, 0)
 			ns.SetSign(row.sign, quest, node.status)
+			row.sign:SetAlpha(node.status == "closed" and 0.4 or 1)
 			row.level:Show()
 			chip, tone = ns.StatusChip(quest, node.status)
-			-- (another of a choice taken: the whole row faded)
-			row:SetAlpha(node.status == "closed" and 0.4 or 1)
 			-- (hovered: its whole name, where you stand, its levels, its step in its chain, what holds it back,
 			-- who was seen giving it)
 			local tip = { ns.QuestName(quest), StatusText(node) }
@@ -293,7 +290,7 @@ local function DrawQuests()
 			end
 			local step, steps = ns.ChainStep(quest)
 			if step then tip[#tip + 1] = L.CHAIN_STEP:format(step, steps) end
-			if node.status == "locked" then
+			if node.status == "locked" or node.status == "shut" then
 				local holds = ns.Missing(quest)
 				if holds[1] then tip[#tip + 1] = L.STILL_NEEDS:format(table.concat(holds, quest.any and " / " or ", ")) end
 			end
@@ -310,7 +307,33 @@ local function DrawQuests()
 	end
 end
 
-local function ChooseQuest(node)
+-- A quest's card (its right click, the pad's top button): the same actions as on the list of quests followed.
+local function QuestCard(node, row)
+	local quest = node.quest
+	local rows = ns.QuestActions({ id = quest.id, title = ns.QuestName(quest), level = quest.questLevel }, "window")
+	if not rows[1] then return end
+	local beside = row ~= nil and U.UsingPad and U.UsingPad()
+	Skin.ActionCard(beside and row or nil, { atCursor = not beside, title = ns.QuestName(quest), rows = rows })
+end
+
+local function ChooseQuest(node, mouse)
+	if not (node and node.quest) then return end
+	if mouse == "RightButton" then
+		for _, row in ipairs(questList.rows) do
+			if row.entry == node then return QuestCard(node, row) end
+		end
+		return QuestCard(node)
+	end
+	-- (Shift, as in the game's log: its link while you write in the chat, else followed or no longer)
+	if IsShiftKeyDown() then
+		if ns.Writing() then return ns.LinkQuest(node.quest) end
+		if ns.ToggleWatch(node.quest.id) then return end
+	end
+	-- (the quest chosen clicked again, its sheet open: the sheet goes, as a creature's card does; again: it comes back)
+	if node == chosenQuest and ns.SheetOwner() == window and ns.SheetQuest() == node.quest then
+		Skin.Play("click")
+		return ns.HideSheet()
+	end
 	chosenQuest = node
 	-- Its sheet beside the window: all it says and asks.
 	ns.ShowSheet(node.quest, window)
@@ -616,7 +639,10 @@ function SearchQuests(text)
 	searching = text
 	-- (accents and capitals aside: "foret" finds "Forêt"; each place's own quests only, no tree built)
 	local Fold = U.Fold or U.Upper
-	tree = ns.Search(Fold(text), Fold, SEARCH_MOST)
+	-- (one more asked: more found than shown is said, never cut silently)
+	tree = ns.Search(Fold(text), Fold, SEARCH_MOST + 1)
+	local more = #tree > SEARCH_MOST
+	if more then tree[#tree] = nil end
 	shown = Filtered(true)
 	gearView:Hide()
 	libraryView:Hide()
@@ -624,7 +650,7 @@ function SearchQuests(text)
 	window.rule:Show()
 	window.right:Show()
 	header:Show()
-	header.name:SetText(L.SEARCH_RESULTS:format(#tree))
+	header.name:SetText(more and L.SEARCH_MORE:format(SEARCH_MOST) or L.SEARCH_RESULTS:format(#tree))
 	-- (a search: every quest found, whatever the filter)
 	header.entrance:SetText("")
 	for _, piece in ipairs({ header.main, header.pin, header.counts, header.bar, header.progress, header.filter, header.hideDone }) do
@@ -748,7 +774,8 @@ end
 
 local function Create()
 	window = Skin.CreateWindow("WandererQuestsWindow", "MEDIUM")
-	Skin.Sounds(window, Skin.SOUNDS.open, Skin.SOUNDS.close)
+	-- (the game's quest log sounds, as Wanderer's own reminders)
+	Skin.Sounds(window, "IG_QUEST_LOG_OPEN", "IG_QUEST_LOG_CLOSE")
 	Skin.Dress(window, { "CENTER", UIParent, "CENTER", 0, 40 }, "questsPos")
 	local saved = State().size
 	-- (never taller than the screen: its foot always in reach)
@@ -792,6 +819,8 @@ local function Create()
 	questList = Skin.Table(right, {
 		width = WIDTH - LEFT_WIDTH - GAP - margin * 2, rows = MAX_ROWS, rowHeight = QUEST_ROW, titles = false, icon = false,
 		onClick = ChooseQuest, onDraw = DrawQuests, columns = { { key = "chip", width = 84 } },
+		-- (its right click: the quest's actions, the pad's top button)
+		padRight = true, padRightWord = "MORE",
 	})
 	questList:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -8)
 	questList:SetPoint("RIGHT", right, "RIGHT", 0, 0)
@@ -1003,10 +1032,13 @@ events:SetScript("OnEvent", function(_, event, ...)
 		local itemID, success = ...
 		if not ns.Awaited(itemID, success) then return end
 		ns.ForgetGear()
+		ns.ForgetSecrets()
 		if kind == "gear" then
 			GearAgain()
 		elseif kind == "books" then
 			BooksAgain()
+		elseif kind == "secrets" and not searching then
+			Fill()
 		else
 			Redraw()
 		end
@@ -1105,6 +1137,12 @@ function ns.Init()
 		Front = function(id) if Live() then ns.PutInFront(id) end end,
 		-- (the quest in front of the list, the one you pinned: nil when none)
 		InFront = function() return Live() and ns.InFront and ns.InFront() or nil end,
+		-- (a quest's actions, the same as on the list followed and in this window: { text, glyph, onClick }; where:
+		-- "atlas" leaves out showing it there)
+		Actions = function(id, title, where)
+			if not (Live() and id) then return {} end
+			return ns.QuestActions({ id = id, title = title }, where)
+		end,
 		-- (a quest's sheet beside another addon's window, the atlas: false when this addon does not know the quest)
 		Sheet = function(id, beside)
 			local quest = Live() and id and ns.HasData() and ns.Quest(id)

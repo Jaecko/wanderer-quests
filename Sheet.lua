@@ -16,6 +16,13 @@ local L = ns.L
 
 local W = Wanderer
 local U = W.Util
+-- (an item's modified click, the game's way: Shift links it, Ctrl tries it on; true when handled)
+local ItemClick = rawget(U, "ItemClick") or function(link)
+	if link and IsModifiedClick() and HandleModifiedItemClick then
+		HandleModifiedItemClick(link)
+		return true
+	end
+end
 
 local WIDTH = 420
 local GAP = 4 -- from the window
@@ -29,7 +36,7 @@ local shown -- the quest shown
 local texts, rows, rules = {}, {}, {} -- made once, used again at each drawing
 local used = { texts = 0, rows = 0, rules = 0 }
 local pending = {} -- the items shown without a name yet (not refused): drawn again when one comes
-local UNTAKEN = { available = true, locked = true, level = true } -- (not taken yet: its story may wait)
+local UNTAKEN = { available = true, locked = true, level = true, shut = true } -- (not taken yet: its story may wait)
 local unfolded = {} -- the stories opened anyway, this session
 local hooked = {} -- the windows the sheet follows
 
@@ -223,6 +230,8 @@ local function Row()
 		W.Skin.ItemTooltip(row, function(self) return self.item end)
 		row:RegisterForClicks("LeftButtonUp", "RightButtonUp") row.padRightWord = "MORE"
 		row:SetScript("OnClick", function(self, button)
+			-- (an item's line: a modified click the game's way first)
+			if button ~= "RightButton" and self.item and ItemClick((select(2, U.ItemInfo(self.item)))) then return end
 			local data = self.data
 			if not data then return end
 			if button == "RightButton" then return RowMenu(self, true) end
@@ -372,7 +381,7 @@ end
 local function Ready(quest, status, asks)
 	local parts = {}
 	local function Add(ok, words) parts[#parts + 1] = (ok and READY_YES or READY_NO) .. " " .. words end
-	if status == "available" or status == "level" or status == "locked" then
+	if status == "available" or status == "level" or status == "locked" or status == "shut" then
 		Add((quest.requiredLevel or 0) <= ns.YourLevel(), L.READY_LEVEL:format(quest.requiredLevel or 1))
 		local holds = ns.Missing(quest)
 		if holds[1] then

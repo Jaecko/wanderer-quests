@@ -8,6 +8,11 @@ Its quest data (QuestData.lua, SpawnData.lua and Names_*.lua) is generated from:
   the quests before and after them, their levels, races and classes.
 - pfQuest by Shagu, https://github.com/shagu/pfQuest (MIT licence, below): who gives each quest, where they
   stand, and the names of the quests and the givers in nine languages.
+- NorgannonDB, compiled by Maro, https://github.com/zmarotrix/NorgannonDB (GNU GPL v3): WoW Forever's own
+  quests (the secrets started by objects of the world among them), the quests Forever does not offer, their
+  givers and where creatures and objects stand on Forever's maps, their names and texts in nine languages.
+  NorgannonDB itself includes QuestieDB (https://github.com/Questie/QuestieDB, GNU GPL v3), pfQuest, the
+  CMaNGOS classic database and DungeonJournal by Exehn (used with the author's permission, credited).
 
 The dungeon and raid doors (Data.lua, ENTRANCES: their places in the world) come from Endless Map
 (AzerothUnrolled) by Hadlock (GNU GPL v3 or later), itself from the MaNGOS and AzerothCore databases.

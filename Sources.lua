@@ -89,10 +89,13 @@ function ns.SourceCard(item, anchor)
 			end
 		end
 	end
-	local others = 0
+	-- (the farther ones past the few shown: how many, said at the foot)
+	local others, beyond = 0, 0
 	for at = 2, #sources do
 		local who = sources[at].who
-		if who.x and others < OTHERS_MOST then
+		if who.x and others >= OTHERS_MOST then
+			beyond = beyond + 1
+		elseif who.x then
 			others = others + 1
 			rows[#rows + 1] = { text = L.SOURCE_GO:format(L[HOW[sources[at].how]], who.name, ns.AreaName(who.zone) or "?"), glyph = "chevron",
 				onClick = function() ns.Follow(who, info) end }
@@ -100,7 +103,8 @@ function ns.SourceCard(item, anchor)
 	end
 	if not rows[1] then return false end
 	W.Skin.Play("click")
-	W.Skin.ActionCard(anchor, { title = U.ItemName(item) or "", rows = rows, atCursor = anchor == nil })
+	W.Skin.ActionCard(anchor, { title = U.ItemName(item) or "", rows = rows, atCursor = anchor == nil,
+		foot = beyond > 0 and L.SOURCE_MORE:format(beyond) or nil })
 	return true
 end
 
