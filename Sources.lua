@@ -83,8 +83,11 @@ function ns.SourceCard(item, anchor)
 	if type(bestiary) == "table" and bestiary.Show then
 		for _, source in ipairs(sources) do
 			if source.how == "drop" and bestiary.Known(source.who.id) then
-				rows[#rows + 1] = { text = L.SOURCE_BESTIARY:format(source.who.name), glyph = "grid",
-					onClick = function() bestiary.Show(source.who.id, ns.SheetShown() and ns.SheetFrame() or nil) end }
+				-- (beside the sheet only while it is seen: gone unseen with its window, the card would be unseen too)
+				rows[#rows + 1] = { text = L.SOURCE_BESTIARY:format(source.who.name), glyph = "grid", onClick = function()
+					local sheet = ns.SheetShown() and ns.SheetFrame()
+					bestiary.Show(source.who.id, sheet and sheet:IsVisible() and sheet or nil)
+				end }
 				break
 			end
 		end

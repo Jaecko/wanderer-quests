@@ -51,7 +51,9 @@ function Pin:OnAcquired(data)
 	if self.icon.SetDesaturated then self.icon:SetDesaturated(data.low and true or false) end
 	local alpha = data.low and LOW_ALPHA or 1
 	-- (a quest's sheet open: the givers of other quests step back)
-	local focus = ns.SheetQuest and ns.SheetQuest()
+	-- (seen only: the sheet goes unseen with the window it is beside, the givers come back whole)
+	local sheet = ns.SheetFrame and ns.SheetFrame()
+	local focus = sheet and sheet:IsVisible() and ns.SheetQuest and ns.SheetQuest()
 	if focus then
 		local mine = false
 		for _, quest in ipairs(data.quests) do
