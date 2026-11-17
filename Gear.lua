@@ -226,6 +226,8 @@ function ns.GearView(parent, width)
 		self.pick:SetWidth(part)
 	end
 	local rule = Skin.Rule(view, true, 0.2)
+	-- (the game look: no line between the two sheets, the game draws none)
+	if Skin.GameWindows and Skin.GameWindows() then rule:SetAlpha(0) end
 	rule:SetPoint("TOPLEFT", view.worn, "TOPRIGHT", SIDE_GAP / 2, 0)
 	rule:SetPoint("BOTTOM", view, "BOTTOM")
 	-- A click on a piece: its quest's sheet.

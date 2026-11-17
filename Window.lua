@@ -805,6 +805,8 @@ local function Create()
 	})
 	dungeonList:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -(margin + TOP))
 	local rule = Skin.Rule(window, true, 0.2)
+	-- (the game look: no line between the two lists, the game's quest log draws none)
+	if Skin.GameWindows and Skin.GameWindows() then rule:SetAlpha(0) end
 	window.rule = rule
 	rule:SetPoint("TOPLEFT", dungeonList, "TOPRIGHT", GAP / 2, 0)
 	rule:SetPoint("BOTTOM", window, "BOTTOM", 0, margin)

@@ -127,12 +127,19 @@ local function Line(template, color, words, gap)
 end
 
 -- A section: its name in small capitals over a thin golden rule.
+-- (the game look: its gold section titles, written as they are, over the game's own divider)
+local function GameLook() return W.Skin.GameWindows and W.Skin.GameWindows() end
 local function Section(label)
-	Line("GameTooltipTextSmall", C.label, U.Upper(label), 16)
+	if GameLook() then
+		Line("GameFontNormal", C.label, label, 16)
+	else
+		Line("GameTooltipTextSmall", C.label, U.Upper(label), 16)
+	end
 	used.rules = used.rules + 1
 	local rule = rules[used.rules]
 	if not rule then
 		rule = W.Skin.Rule(content)
+		if GameLook() then W.Skin.GameAtlas(rule, "Options_HorizontalDivider") end
 		rules[used.rules] = rule
 	end
 	rule:ClearAllPoints()
@@ -186,7 +193,7 @@ local function Row()
 		row.hover = row:CreateTexture(nil, "BACKGROUND")
 		row.hover:SetPoint("TOPLEFT", row, "TOPLEFT", -4, 2)
 		row.hover:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 4, -2)
-		row.hover:SetColorTexture(1, 1, 1, W.Skin.HOVER or 0.05)
+		if W.Skin.HoverTint then W.Skin.HoverTint(row.hover) else row.hover:SetColorTexture(1, 1, 1, W.Skin.HOVER or 0.05) end
 		row.hover:Hide()
 		row.more = W.Skin.RowMore(row, RowMenu)
 		row.route = Action(row, "plus", function() return (U.UsingPad and U.UsingPad()) and L.ACTION_ROUTE_MENU or L.ACTION_ROUTE end, ToRoute)
