@@ -169,19 +169,21 @@ local function Failed(id, info)
 end
 
 -- The seconds a timed quest has left (nil: not timed). index: its line in the log (the game's older way).
+-- (the game's newer word first; Forever's own timed quests answer only through the older one, its quest timers)
 local function TimeLeft(id, index)
 	local log = Log()
 	if log and log.GetTimeAllowed then
 		local total, elapsed = Safe(log.GetTimeAllowed, id)
 		total, elapsed = Clean(total), Clean(elapsed)
 		if type(total) == "number" and total > 0 and type(elapsed) == "number" then return math.max(0, total - elapsed) end
-		return nil
 	end
 	local timers, indexOf = _G.GetQuestTimers, _G.GetQuestIndexForTimer
 	if timers and indexOf then
 		timers = { Safe(timers) }
 		for at, left in ipairs(timers) do
-			if Clean(Safe(indexOf, at)) == index then return tonumber(Clean(left)) end
+			local line = Clean(Safe(indexOf, at))
+			-- (by its line in the log, or, the game giving the quest's own id there, by it)
+			if line ~= nil and (line == index or line == id) then return tonumber(Clean(left)) end
 		end
 	end
 	return nil
@@ -1697,7 +1699,7 @@ function ns.InitTracker()
 	local events = CreateFrame("Frame")
 	for _, event in ipairs({ "QUEST_LOG_UPDATE", "QUEST_WATCH_LIST_CHANGED", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN",
 		"ZONE_CHANGED_NEW_AREA", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "BAG_UPDATE_COOLDOWN", "UNIT_QUEST_LOG_CHANGED",
-		"SUPER_TRACKING_CHANGED" }) do
+		"SUPER_TRACKING_CHANGED", "QUEST_TIMERS_CHANGED" }) do
 		pcall(events.RegisterEvent, events, event)
 	end
 	events:SetScript("OnEvent", function(_, event, unit, ...)
