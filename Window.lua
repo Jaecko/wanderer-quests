@@ -23,6 +23,16 @@ local QUEST_ROW = KIT_ROW and KIT_ROW.compact or 24 -- the quests
 local LEFT_WIDTH = 290
 local GAP = 24
 local TOP = 70 -- the heading, above the lists
+-- (the game look: the heading in the game's bar; the tabs, the search, the "?" and the cog on one top line, the
+-- game's divider under it, the lists under that)
+local GAME_LINE = 8 -- the tabs' frame from the window's top (their art standing a little over it)
+local GAME_RULE = 38 -- the divider, where the tabs stand
+local GAME_TOP = 46 -- the lists
+local GAME_SEARCH_RIGHT = 52 -- the search's right end from the window's (the "?" and the cog right of it)
+local SEARCH_WIDTH, SEARCH_LEAST = 200, 140
+local function GameLook() return Skin.GameWindows and Skin.GameWindows() end
+-- Where the lists begin, from the window's top.
+local function Top(margin) return GameLook() and GAME_TOP or margin + TOP end
 local HEADER = 126 -- the place chosen (its name, what is there, its entrance, its bar, the filter), above its quests
 local MAX_ROWS = 44 -- rows made once; those that fit are shown
 local INDENT = 12 -- a chain's step
@@ -530,9 +540,11 @@ local function ChooseDungeon(entry)
 end
 
 -- The tabs' links: the one shown in gold.
+local TopLine
 local function DrawTabs()
 	for _, tab in ipairs(TABS) do tabs:SetLabel(tab[1], TabName(tab)) end
 	tabs:Select(kind)
+	TopLine()
 	window.pick:SetText(kind == "zones" and L.PICK_ZONE or kind == "class" and L.PICK_CLASS or L.PICK)
 end
 
@@ -695,11 +707,22 @@ end
 
 -- The window ------------------------------------------------------------------------------------------
 
+-- The game look's top line: the tabs and the search share it, the tabs narrower rather than under the search,
+-- the search shorter (never below its least) rather than over the tabs.
+function TopLine()
+	if not (window and window.search and GameLook()) then return end
+	local margin = Skin.Margin() + 8
+	local room = (window:GetWidth() or 0) - margin - GAME_SEARCH_RIGHT - 8
+	tabs.fit = room - SEARCH_LEAST
+	tabs:Layout()
+	window.search:SetWidth(math.max(SEARCH_LEAST, math.min(SEARCH_WIDTH, room - (tabs:GetWidth() or 0))))
+end
+
 -- The lists as tall as the window lets them.
 local function Fit()
 	if not window then return end
 	local margin = Skin.Margin() + 8
-	local height = window:GetHeight() - (margin + TOP) - margin
+	local height = window:GetHeight() - Top(margin) - margin
 	dungeonList:Fit(height)
 	questList:Fit(height - HEADER)
 	libraryView:Fit(height)
@@ -785,12 +808,24 @@ local function Create()
 	local list = {}
 	for _, tab in ipairs(TABS) do list[#list + 1] = { tab[1], TabName(tab) } end
 	tabs = Skin.Tabs(window, list, ShowTab)
-	tabs:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, 0)
+	if GameLook() then
+		tabs:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -GAME_LINE)
+		local base = Skin.Rule(window)
+		base:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -GAME_RULE)
+		base:SetPoint("TOPRIGHT", window, "TOPRIGHT", -margin, -GAME_RULE)
+	else
+		tabs:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, 0)
+	end
 	-- A quest by its name, from every tab.
 	local searchSoon = U.Debounce(0.3, function() SearchQuests(window.search:GetText()) end)
 	window.search = Skin.CreateInput(window, nil, 60, { hint = L.QUEST_SEARCH, onChange = function() searchSoon() end })
-	window.search:SetSize(200, 24)
-	window.search:SetPoint("TOPRIGHT", window, "TOPRIGHT", -(margin + 74), -(margin + 6))
+	window.search:SetSize(SEARCH_WIDTH, 24)
+	if GameLook() then
+		-- (level with the cog and the "?": its middle about 14 under the top)
+		window.search:SetPoint("TOPRIGHT", window, "TOPRIGHT", -GAME_SEARCH_RIGHT, -3)
+	else
+		window.search:SetPoint("TOPRIGHT", window, "TOPRIGHT", -(margin + 74), -(margin + 6))
+	end
 	-- (the help beside the cog, the search left of it; a controller reads its own keys)
 	local help = Skin.Help and Skin.Help(window, L.HELP_TIP, "HEADING")
 	if help then
@@ -803,7 +838,7 @@ local function Create()
 		width = LEFT_WIDTH, rows = MAX_ROWS, rowHeight = ROW, titles = false, icon = false, onClick = ChooseDungeon, onDraw = DrawPlaces,
 		columns = { { key = "range", width = 46 }, { key = "take", width = 20 }, { key = "bar", width = BAR_WIDTH } },
 	})
-	dungeonList:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -(margin + TOP))
+	dungeonList:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -Top(margin))
 	local rule = Skin.Rule(window, true, 0.2)
 	-- (the game look: no line between the two lists, the game's quest log draws none)
 	if Skin.GameWindows and Skin.GameWindows() then rule:SetAlpha(0) end
@@ -829,11 +864,11 @@ local function Create()
 	questList:Hide()
 	-- The gear tab's sheets, across the window.
 	gearView = ns.GearView(window, window:GetWidth() - margin * 2)
-	gearView:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -(margin + TOP))
+	gearView:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -Top(margin))
 	gearView:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -margin, margin)
 	-- The books' tab, across the window.
 	libraryView = ns.LibraryView(window, window:GetWidth() - margin * 2)
-	libraryView:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -(margin + TOP))
+	libraryView:SetPoint("TOPLEFT", window, "TOPLEFT", margin, -Top(margin))
 	libraryView:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -margin, margin)
 	-- Its corner: dragged, the window grows or shrinks, the lists with it; its size and place kept.
 	Skin.Resizable(window, {
@@ -848,8 +883,10 @@ local function Create()
 		if skin then skin:Layout() end
 		Fit()
 		if gearView then gearView:Resize((self:GetWidth() or WIDTH) - margin * 2) end
+		TopLine()
 	end)
 	Fit()
+	TopLine()
 	-- Each time it shows: its scale (smaller when it would not fit the screen), where you stand.
 	window:HookScript("OnShow", function(self)
 		self:SetScale(Skin.FitScale(self))

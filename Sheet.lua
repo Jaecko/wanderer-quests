@@ -721,6 +721,8 @@ local function Create()
 	-- (never half off the screen, whatever the window does)
 	sheet:SetClampedToScreen(true)
 	local margin = W.Skin.Margin() + 8
+	-- (the game look: the game's frame as its window's, the quest's name in its title bar, the cross there)
+	if GameLook() and W.Skin.GameFrame then W.Skin.GameFrame(sheet) end
 	W.Skin.CloseButton(sheet, function() ns.HideSheet() end)
 	local _, title = W.Skin.Header(sheet, L.SHEET)
 	sheet.title = title
@@ -759,7 +761,12 @@ local function Create()
 	end, L.ALL_SHOPPING_DESC)
 	-- What it says, scrolled by the wheel.
 	scroll = CreateFrame("ScrollFrame", nil, sheet)
-	scroll:SetPoint("TOPLEFT", sheet.title, "BOTTOMLEFT", 0, -10)
+	-- (the game look: the title unseen, in the bar; the words just under the bar)
+	if sheet.gameArt then
+		scroll:SetPoint("TOPLEFT", sheet, "TOPLEFT", margin, -10)
+	else
+		scroll:SetPoint("TOPLEFT", sheet.title, "BOTTOMLEFT", 0, -10)
+	end
 	scroll:SetPoint("BOTTOMRIGHT", sheet, "BOTTOMRIGHT", -margin, margin + 30)
 	content = CreateFrame("Frame", nil, scroll)
 	content:SetSize(WIDTH - margin * 2, 1)
