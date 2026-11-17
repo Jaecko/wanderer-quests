@@ -20,7 +20,7 @@ local W = Wanderer
 local U = W and W.Util
 local Skin = W and W.Skin
 -- (the family's gold: its accents)
-local GOLD = Skin and Skin.COLORS.gold
+local GOLD = Skin and (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS).gold
 local Safe, Clean = U.Safe, U.Clean
 local ItemClick = ns.ItemClick
 local function LinkOf(item) local _, link = U.ItemInfo(item) return link end
@@ -34,10 +34,10 @@ local REST = 0.7 -- the list at rest (calm)
 local IN_FIGHT = 0.7 -- the others during a fight (their opacity on the screen, never below the rest's)
 local FADE_IN, FADE_OUT = 0.2, 0.6
 local FALLBACK = { "TOPRIGHT", "TOPRIGHT", -70, -250 }
-local TITLE_ROLE = Skin.COLORS.title
+local TITLE_ROLE = (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS).title
 -- (the kit's roles for this list: still to do as bright as the titles, done a quiet green; an older core: its own)
-local OBJECTIVE_ROLE = rawget(Skin.COLORS, "objective") or Skin.COLORS.title
-local DONE_ROLE = rawget(Skin.COLORS, "done") or { 0.45, 0.74, 0.5 }
+local OBJECTIVE_ROLE = rawget((rawget(Skin, "SCREEN_COLORS") or Skin.COLORS), "objective") or (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS).title
+local DONE_ROLE = rawget((rawget(Skin, "SCREEN_COLORS") or Skin.COLORS), "done") or { 0.45, 0.74, 0.5 }
 local COUNT_ROOM = 40 -- the count's room at the right of a row
 
 local root, heading, featuredFrame, listFrame, ground, insertLine
@@ -788,10 +788,10 @@ local function Row()
 	row = CreateFrame("Button", nil, root)
 	row:SetHeight(16)
 	row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-	row.text = Skin.Text(row, "GameFontNormal", "text")
+	row.text = (rawget(Skin, "ScreenText") or Skin.Text)(row, "GameFontNormal", "text")
 	row.text:SetJustifyH("LEFT")
 	row.text:SetWordWrap(false)
-	row.count = Skin.Text(row, "GameFontHighlightSmall", "text")
+	row.count = (rawget(Skin, "ScreenText") or Skin.Text)(row, "GameFontHighlightSmall", "text")
 	row.count:SetPoint("RIGHT", row, "RIGHT", -2, 0)
 	row.count:SetJustifyH("RIGHT")
 	row.mark = row:CreateTexture(nil, "ARTWORK")
@@ -842,7 +842,7 @@ local function Row()
 		if self.kind == "quest" then
 			if not InCombatLockdown() and not self.featured then self.handle:SetAlpha(1) end
 			-- (the pin: gold on the quest in front)
-			local c = Skin.COLORS[self.featured and "gold" or "label"]
+			local c = (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS)[self.featured and "gold" or "label"]
 			self.atlas.icon:SetVertexColor(c[1], c[2], c[3])
 			self.atlas:SetShown(ns.OnAtlas() and self.quest ~= nil)
 			QuestTip(self)
@@ -891,13 +891,13 @@ local function Line(parent, kind, words, role, template)
 	-- (the top button: a right click's menu, on a quest's lines and the heading; a zone's name and "n more" have none)
 	row.padRight = (kind == "quest" or kind == "turnin" or kind == "objective" or kind == "heading") or nil
 	row.text:SetFontObject(Skin.FontFor(template or "GameFontNormal"))
-	local c = type(role) == "table" and role or Skin.COLORS[role or "text"] or Skin.COLORS.text
+	local c = type(role) == "table" and role or (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS)[role or "text"] or (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS).text
 	row.text:SetTextColor(c[1], c[2], c[3])
 	row.text:SetShadowColor(0, 0, 0, 0.95)
 	row.text:SetShadowOffset(1, -1)
 	row.text:SetText(words or "")
 	row.count:SetText("")
-	row.count:SetTextColor(Skin.COLORS.text[1], Skin.COLORS.text[2], Skin.COLORS.text[3])
+	row.count:SetTextColor((rawget(Skin, "SCREEN_COLORS") or Skin.COLORS).text[1], (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS).text[2], (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS).text[3])
 	row.count:SetShadowColor(0, 0, 0, 0.95)
 	row.count:SetShadowOffset(1, -1)
 	row.mark:Hide()
@@ -920,7 +920,7 @@ end
 local function Mark(row, glyph, role, size)
 	row.mark:SetSize(size or 10, size or 10)
 	Skin.SetGlyph(row.mark, glyph)
-	local c = type(role) == "table" and role or Skin.COLORS[role or "gold"]
+	local c = type(role) == "table" and role or (rawget(Skin, "SCREEN_COLORS") or Skin.COLORS)[role or "gold"]
 	row.mark:SetVertexColor(c[1], c[2], c[3])
 	row.mark:ClearAllPoints()
 	row.mark:SetPoint("LEFT", row, "LEFT", 0, 0)
@@ -944,7 +944,7 @@ end
 
 local function TitleWords(quest)
 	local words = quest.level and ("[%d%s] %s"):format(quest.level, quest.tag or "", quest.title) or quest.title
-	if quest.new then words = words .. "  " .. Skin.Colorize(L.TRACKER_NEW, "gold") end
+	if quest.new then words = words .. "  " .. (rawget(Skin, "ScreenColorize") or Skin.Colorize)(L.TRACKER_NEW, "gold") end
 	return words
 end
 
@@ -957,14 +957,14 @@ local function TitleColor(quest)
 end
 
 -- Failed, in the game's word, in red.
-local function FailedWords() return Skin.Colorize(_G.FAILED or "", "bad") end
+local function FailedWords() return (rawget(Skin, "ScreenColorize") or Skin.Colorize)(_G.FAILED or "", "bad") end
 
 -- The time a timed quest has left, as a clock ("4:05", "1:02:00"), red in its last minute.
 local function Clock(row)
 	local left = math.max(0, math.floor(row.timer.left - (GetTime() - row.timer.at)))
 	local clock = left >= 3600 and ("%d:%02d:%02d"):format(math.floor(left / 3600), math.floor(left % 3600 / 60), left % 60)
 		or ("%d:%02d"):format(math.floor(left / 60), left % 60)
-	return Skin.Colorize(clock, left < 60 and "bad" or "text")
+	return (rawget(Skin, "ScreenColorize") or Skin.Colorize)(clock, left < 60 and "bad" or "text")
 end
 
 -- A timed quest's words: the line under its title, or its count on one line (compact).
@@ -1251,7 +1251,7 @@ local function Draw()
 	local compact = Setting("trackerCompact") == true
 	local maxHeight = tonumber(Setting("trackerHeight")) or 420
 	-- The heading: the word, how many, the menu.
-	local head = Line(heading, "heading", U.Upper(L.QUESTS) .. "  " .. Skin.Colorize(tostring(count), "muted"), "kicker", "GameFontNormalSmall")
+	local head = Line(heading, "heading", U.Upper(L.QUESTS) .. "  " .. (rawget(Skin, "ScreenColorize") or Skin.Colorize)(tostring(count), "muted"), "kicker", "GameFontNormalSmall")
 	head:SetPoint("TOPLEFT", heading, "TOPLEFT", 0, 0)
 	head:SetPoint("RIGHT", heading, "RIGHT", 0, 0)
 	Mark(head, mine.closed and "chevron" or "down", "kicker", 9)
@@ -1304,7 +1304,7 @@ local function Draw()
 				elseif item.kind == "group" then
 					placed[#placed + 1] = { rows = #rows, ly = ly, kind = "group", open = not folded }
 					local g = item.group
-					local line = Line(listFrame, "group", U.Upper(g.title) .. "  " .. Skin.Colorize(tostring(#g.quests), "muted"), "kicker", "GameFontNormalSmall")
+					local line = Line(listFrame, "group", U.Upper(g.title) .. "  " .. (rawget(Skin, "ScreenColorize") or Skin.Colorize)(tostring(#g.quests), "muted"), "kicker", "GameFontNormalSmall")
 					Mark(line, folded and "plus" or "chevron", "kicker", 8)
 					line:SetPoint("TOPLEFT", listFrame, "TOPLEFT", 0, -ly)
 					line:SetPoint("RIGHT", listFrame, "RIGHT", 0, 0)
@@ -1642,7 +1642,7 @@ function ns.InitTracker()
 	root:Hide()
 	-- The controller's wheel goes to the game's list of quests, put away here: it comes to this one instead, with the
 	-- game's own key for the map.
-	root.padHint = Skin.Text(root, "GameFontHighlight", "text")
+	root.padHint = (rawget(Skin, "ScreenText") or Skin.Text)(root, "GameFontHighlight", "text")
 	root.padHint:SetPoint("BOTTOMLEFT", root, "TOPLEFT", 0, 4)
 	root.padHint:SetText(L.TRACKER_PAD_HINT)
 	root.padHint:Hide()
