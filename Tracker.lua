@@ -684,9 +684,10 @@ function ns.QuestActions(quest, where)
 		Add(Store().featured == quest.id and L.TRACKER_UNFEATURE or L.TRACKER_FEATURE, "star", function() ns.Feature(quest.id) end, true)
 	end
 	if where ~= "window" and ns.Reveal and known then Add(L.TRACKER_SHEET, "chevron", function() ns.Reveal(quest.id) end) end
-	-- (the game's own details of the quest, as its list's menu offers them, in its words)
+	-- (the game's own details of the quest, as its list's menu offers them, in its words; the mouse's only: the game's
+	-- map opened from addon code blocks the game's own actions under the pad)
 	local open = _G.QuestUtil and _G.QuestUtil.OpenQuestDetails or _G.QuestMapFrame_OpenToQuestDetails
-	if inLog and open and type(_G.OBJECTIVES_VIEW_IN_QUESTLOG) == "string" then
+	if inLog and open and type(_G.OBJECTIVES_VIEW_IN_QUESTLOG) == "string" and not (U.UsingPad and U.UsingPad()) then
 		Add(_G.OBJECTIVES_VIEW_IN_QUESTLOG, "chevron", function() Safe(open, quest.id) end)
 	end
 	-- (Wanderer Maps: the quest on its map in the atlas)
